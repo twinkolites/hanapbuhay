@@ -483,34 +483,71 @@
           // Handle different verification scenarios
           if (code) {
             // Supabase email verification using code
-            secureLog("info", "Processing code-based email verification");
+            secureLog("info", "Processing code-based email verification", {
+              codeLength: code.length,
+              codePrefix: code.substring(0, 8) + "..."
+            });
 
             try {
+              // Try verifyOtp first (for magic link/email verification)
               const { data, error: verifyError } = await supabase.auth.verifyOtp({
                 token: code,
-                type: 'email',
+                type: "email",
               });
 
               if (verifyError) {
-                secureLog("error", "Email verification failed", {
+                secureLog("warn", "verifyOtp failed, trying exchangeCodeForSession", {
                   errorCode: verifyError.message,
+                  errorName: verifyError.name
                 });
-                showError("Failed to verify your email. Please try again.");
-                return;
+
+                // If verifyOtp fails, try exchangeCodeForSession (for PKCE flow)
+                try {
+                  const { data: sessionData, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+
+                  if (exchangeError) {
+                    secureLog("error", "Both verification methods failed", {
+                      verifyOtpError: verifyError.message,
+                      exchangeError: exchangeError.message
+                    });
+                    showError("Failed to verify your email. Please try again.");
+                    return;
+                  }
+
+                  secureLog("info", "Email verification successful via exchangeCodeForSession");
+                  showSuccess();
+
+                  // Try to open the app automatically after a short delay
+                  setTimeout(() => {
+                    tryOpenApp();
+                  }, 2000);
+
+                } catch (exchangeException) {
+                  secureLog("error", "exchangeCodeForSession exception", {
+                    error: exchangeException.message
+                  });
+                  showError("Failed to verify your email. Please try again.");
+                  return;
+                }
+
+              } else {
+                // verifyOtp succeeded
+                secureLog("info", "Email verification successful via verifyOtp");
+                showSuccess();
+
+                // Try to open the app automatically after a short delay
+                setTimeout(() => {
+                  tryOpenApp();
+                }, 2000);
               }
 
-              secureLog("info", "Email verification successful");
-              showSuccess();
-
-              // Try to open the app automatically after a short delay
-              setTimeout(() => {
-                tryOpenApp();
-              }, 2000);
             } catch (e) {
               secureLog("error", "Verification process error", {
                 error: e.message,
+                errorType: e.name,
+                stack: e.stack ? e.stack.substring(0, 200) : "no stack"
               });
-              showError("An error occurred during verification.");
+              showError("An error occurred during verification: " + e.message);
             }
           } else if (accessToken && refreshToken) {
             secureLog("info", "Processing token-based verification");
