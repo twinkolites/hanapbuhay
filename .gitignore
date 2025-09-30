@@ -1,0 +1,98 @@
+# Flutter/Dart
+.dart_tool/
+.packages
+pubspec.lock
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Android
+android/app/build/
+android/.gradle/
+android/captures/
+android/gradle/
+android/gradlew
+android/gradlew.bat
+android/local.properties
+android/**/build/
+android/**/GeneratedPluginRegistrant.java
+
+# iOS
+ios/Flutter/Generated.xcconfig
+ios/Flutter/app.flx
+ios/Flutter/app.zip
+ios/Flutter/flutter_assets/
+ios/ServiceDefinitions.json
+ios/Runner/GeneratedPluginRegistrant.h
+ios/build/
+ios/Flutter/App.framework
+ios/Flutter/Flutter.framework
+ios/build/
+
+# Web
+build/
+web/build/
+web/email-verification.html.backup
+
+# macOS
+macos/Flutter/GeneratedPluginRegistrant.swift
+macos/Flutter/ephemeral/
+macos/build/
+
+# Windows
+windows/flutter/GeneratedPluginRegistrant.cc
+windows/build/
+
+# Linux
+linux/build/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
+
+# Test coverage
+coverage/
+
+# Build artifacts
+*.apk
+*.aab
+*.ipa
+*.app
+*.xcarchive
+
+# Temporary files
+*.tmp
+*.temp
+
+# Supabase
+.supabase/
+
+# Node modules (if any)
+node_modules/
+
+# Deployment scripts (keep these)
+!deploy-verification-page.sh

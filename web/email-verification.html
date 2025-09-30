@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Email Verification - Hanapbuhay</title>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <style>
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        margin: 0;
+        padding: 0;
+        background: linear-gradient(135deg, #eaf9e7 0%, #c0e6ba 100%);
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .container {
+        max-width: 500px;
+        margin: 20px;
+        background-color: #ffffff;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        border-radius: 16px;
+        overflow: hidden;
+      }
+      .header {
+        background: linear-gradient(135deg, #4ca771 0%, #66bb6a 100%);
+        padding: 30px 20px;
+        text-align: center;
+        color: white;
+      }
+      .header h1 {
+        margin: 0;
+        font-size: 24px;
+        font-weight: 700;
+      }
+      .content {
+        padding: 30px 20px;
+      }
+      .loading {
+        text-align: center;
+        padding: 40px 20px;
+      }
+      .loading .spinner {
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid #4ca771;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 20px;
+      }
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+      .success-icon {
+        text-align: center;
+        margin-bottom: 20px;
+      }
+      .success-icon .icon {
+        font-size: 64px;
+        color: #4ca771;
+      }
+      .error-icon {
+        text-align: center;
+        margin-bottom: 20px;
+      }
+      .error-icon .icon {
+        font-size: 64px;
+        color: #f44336;
+      }
+      .message {
+        text-align: center;
+        margin-bottom: 30px;
+      }
+      .message h2 {
+        color: #013237;
+        font-size: 20px;
+        margin-bottom: 10px;
+      }
+      .message p {
+        color: #666;
+        font-size: 16px;
+        margin-bottom: 20px;
+      }
+      .instructions {
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
+        display: none;
+      }
+      .instructions.show {
+        display: block;
+      }
+      .instructions h3 {
+        color: #013237;
+        font-size: 18px;
+        margin-bottom: 15px;
+      }
+      .instruction-item {
+        display: flex;
+        align-items: flex-start;
+        margin-bottom: 15px;
+      }
+      .instruction-number {
+        background-color: #4ca771;
+        color: white;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        font-weight: bold;
+        margin-right: 12px;
+        flex-shrink: 0;
+      }
+      .app-link {
+        display: inline-block;
+        background-color: #4ca771;
+        color: white;
+        padding: 12px 24px;
+        border-radius: 8px;
+        text-decoration: none;
+        font-weight: 600;
+        margin-top: 10px;
+        transition: background-color 0.3s;
+      }
+      .app-link:hover {
+        background-color: #3d8f5e;
+      }
+      .footer {
+        background-color: #013237;
+        color: white;
+        padding: 20px;
+        text-align: center;
+        font-size: 14px;
+      }
+      .footer p {
+        margin: 5px 0;
+        opacity: 0.9;
+      }
+      .troubleshooting {
+        background-color: #fff3cd;
+        border: 1px solid #ffeaa7;
+        border-radius: 8px;
+        padding: 15px;
+        margin-top: 20px;
+      }
+      .troubleshooting h4 {
+        color: #856404;
+        margin-bottom: 10px;
+      }
+      .troubleshooting p {
+        color: #856404;
+        font-size: 14px;
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <!-- Header -->
+      <div class="header">
+        <h1 id="pageTitle">Verifying Email...</h1>
+      </div>
+
+      <!-- Main Content -->
+      <div class="content">
+        <!-- Loading State -->
+        <div id="loadingState" class="loading">
+          <div class="spinner"></div>
+          <p>Verifying your email address...</p>
+        </div>
+
+        <!-- Success State -->
+        <div id="successState" style="display: none">
+          <div class="success-icon">
+            <div class="icon">✅</div>
+          </div>
+          <div class="message">
+            <h2>Your email has been successfully verified!</h2>
+            <p>
+              Welcome to Hanapbuhay! Your account is now active and ready to
+              use.
+            </p>
+          </div>
+          <div class="instructions show">
+            <h3>To continue using the app:</h3>
+            <div class="instruction-item">
+              <div class="instruction-number">1</div>
+              <div class="instruction-text">
+                Open the Hanapbuhay app on your phone
+              </div>
+            </div>
+            <div class="instruction-item">
+              <div class="instruction-number">2</div>
+              <div class="instruction-text">
+                Sign in with your email and password
+              </div>
+            </div>
+            <div class="instruction-item">
+              <div class="instruction-number">3</div>
+              <div class="instruction-text">
+                Start exploring job opportunities!
+              </div>
+            </div>
+          </div>
+          <div style="text-align: center">
+            <a href="#" id="appLink" class="app-link">Open Hanapbuhay App</a>
+            <p style="font-size: 12px; color: #666; margin-top: 10px">
+              If the app doesn't open, please open it manually on your phone.
+            </p>
+          </div>
+        </div>
+
+        <!-- Error State -->
+        <div id="errorState" style="display: none">
+          <div class="error-icon">
+            <div class="icon">❌</div>
+          </div>
+          <div class="message">
+            <h2>Verification Failed</h2>
+            <p id="errorMessage">
+              There was an error verifying your email. Please try again.
+            </p>
+          </div>
+          <div style="text-align: center">
+            <a href="#" onclick="window.close()" class="app-link">Close</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="footer">
+        <p><strong>Hanapbuhay</strong></p>
+        <p>Connecting Filipino job seekers with employers nationwide</p>
+        <p style="font-size: 12px; opacity: 0.7; margin-top: 10px">
+          This is an automated verification page.
+        </p>
+      </div>
+    </div>
+
+    <script>
+      // Initialize Supabase (you'll need to replace these with your actual values)
+      const supabaseUrl = "YOUR_SUPABASE_URL";
+      const supabaseAnonKey = "YOUR_SUPABASE_ANON_KEY";
+
+      if (
+        supabaseUrl === "YOUR_SUPABASE_URL" ||
+        supabaseAnonKey === "YOUR_SUPABASE_ANON_KEY"
+      ) {
+        showError("Supabase configuration is missing. Please contact support.");
+        return;
+      }
+
+      const supabase = window.supabase.createClient(
+        supabaseUrl,
+        supabaseAnonKey
+      );
+
+      // Get URL parameters
+      const urlParams = new URLSearchParams(window.location.search);
+      const accessToken = urlParams.get("access_token");
+      const refreshToken = urlParams.get("refresh_token");
+      const type = urlParams.get("type");
+      const error = urlParams.get("error");
+
+      console.log("Verification params:", {
+        type,
+        hasAccessToken: !!accessToken,
+        hasRefreshToken: !!refreshToken,
+        error,
+      });
+
+      async function handleVerification() {
+        try {
+          // Check for errors first
+          if (error) {
+            showError(`Verification failed: ${error}`);
+            return;
+          }
+
+          // If we have tokens, set the session
+          if (accessToken && refreshToken) {
+            console.log("Setting session with tokens...");
+            const { data, error: sessionError } =
+              await supabase.auth.setSession({
+                access_token: accessToken,
+                refresh_token: refreshToken,
+              });
+
+            if (sessionError) {
+              console.error("Session error:", sessionError);
+              showError("Failed to verify your account. Please try again.");
+              return;
+            }
+
+            console.log("Session set successfully:", data);
+            showSuccess();
+
+            // Try to open the app automatically after a short delay
+            setTimeout(() => {
+              tryOpenApp();
+            }, 2000);
+          } else if (type === "signup") {
+            // Email confirmed but no tokens in URL (normal flow)
+            showSuccess();
+            setTimeout(() => {
+              tryOpenApp();
+            }, 2000);
+          } else {
+            showError(
+              "Invalid verification link. Please request a new verification email."
+            );
+          }
+        } catch (err) {
+          console.error("Verification error:", err);
+          showError("An unexpected error occurred during verification.");
+        }
+      }
+
+      function tryOpenApp() {
+        const appUrl = "io.supabase.hanapbuhay://login-callback";
+        console.log("Attempting to open app:", appUrl);
+
+        // Try multiple methods to open the app
+        window.location.href = appUrl;
+
+        // Also try opening in new tab/window as fallback
+        setTimeout(() => {
+          const newTab = window.open(appUrl, "_blank");
+          if (newTab) {
+            newTab.focus();
+          }
+        }, 500);
+      }
+
+      function showSuccess() {
+        document.getElementById("loadingState").style.display = "none";
+        document.getElementById("successState").style.display = "block";
+        document.getElementById("errorState").style.display = "none";
+        document.getElementById("pageTitle").textContent = "✅ Email Verified!";
+
+        // Update app link
+        document.getElementById("appLink").href =
+          "io.supabase.hanapbuhay://login-callback";
+      }
+
+      function showError(message) {
+        document.getElementById("loadingState").style.display = "none";
+        document.getElementById("successState").style.display = "block";
+        document.getElementById("errorState").style.display = "none";
+        document.getElementById("pageTitle").textContent =
+          "❌ Verification Failed";
+        document.getElementById("errorMessage").textContent = message;
+      }
+
+      // Start verification process
+      handleVerification();
+    </script>
+  </body>
+</html>
