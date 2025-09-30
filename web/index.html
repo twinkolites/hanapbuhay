@@ -4,7 +4,47 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Email Verification - Hanapbuhay</title>
-    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+
+    <!-- Security Headers (Meta Tag Implementation) -->
+    <meta http-equiv="X-Frame-Options" content="DENY" />
+    <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+    <meta http-equiv="X-XSS-Protection" content="1; mode=block" />
+    <meta
+      http-equiv="Referrer-Policy"
+      content="strict-origin-when-cross-origin"
+    />
+    <meta
+      http-equiv="Permissions-Policy"
+      content="geolocation=(), microphone=(), camera=()"
+    />
+
+    <!-- Content Security Policy - Strict for email verification page -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="
+      default-src 'self';
+      script-src 'self' https://unpkg.com https://cdn.jsdelivr.net 'unsafe-inline';
+      style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+      font-src 'self' https://fonts.gstatic.com;
+      img-src 'self' data:;
+      connect-src 'self' https://jhpjpenbtazudqfrkogf.supabase.co wss://jhpjpenbtazudqfrkogf.supabase.co;
+      frame-ancestors 'none';
+      base-uri 'self';
+      form-action 'none';
+      upgrade-insecure-requests;
+    "
+    />
+
+    <!-- Additional Security Meta Tags -->
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet" />
+
+    <!-- Supabase SDK -->
+    <script
+      src="https://unpkg.com/@supabase/supabase-js@2"
+      integrity="sha384-xxx"
+      crossorigin="anonymous"
+    ></script>
     <style>
       body {
         font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
@@ -253,50 +293,157 @@
     </div>
 
     <script>
-      // Initialize Supabase (you'll need to replace these with your actual values)
+      // Security: Input sanitization and validation functions
+      function sanitizeString(input) {
+        if (typeof input !== "string") return "";
+        // Remove potentially dangerous characters and limit length
+        return input.replace(/[<>'"&]/g, "").substring(0, 1000);
+      }
+
+      function validateToken(token) {
+        if (!token || typeof token !== "string") return false;
+        // Basic JWT-like validation (should be 3 parts separated by dots)
+        const parts = token.split(".");
+        return parts.length === 3 && parts.every((part) => part.length > 0);
+      }
+
+      // Security: Rate limiting for function calls
+      const callTracker = new Map();
+      function rateLimit(funcName, maxCalls = 5, timeWindow = 60000) {
+        const now = Date.now();
+        const calls = callTracker.get(funcName) || [];
+
+        // Remove old calls outside the time window
+        const recentCalls = calls.filter((call) => now - call < timeWindow);
+
+        if (recentCalls.length >= maxCalls) {
+          console.warn(`Rate limit exceeded for ${funcName}`);
+          return false;
+        }
+
+        recentCalls.push(now);
+        callTracker.set(funcName, recentCalls);
+        return true;
+      }
+
+      // Security: Secure error logging (no sensitive data)
+      function secureLog(level, message, data = {}) {
+        const sanitizedData = Object.keys(data).reduce((acc, key) => {
+          acc[key] = typeof data[key] === "string" ? "[REDACTED]" : data[key];
+          return acc;
+        }, {});
+
+        console[level](`[SECURE] ${message}`, sanitizedData);
+      }
+
+      // Initialize Supabase with security checks
       const supabaseUrl = "https://jhpjpenbtazudqfrkogf.supabase.co";
       const supabaseAnonKey =
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpocGpwZW5idGF6dWRxZnJrb2dmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ3MjI4MzAsImV4cCI6MjA3MDI5ODgzMH0.pa_xmaWBACJ_8g-wML6z2DEEPa6tHJbXH6S5NndQt2E";
 
+      // Security validation
       if (
-        supabaseUrl === "https://jhpjpenbtazudqfrkogf.supabase.co" ||
-        supabaseAnonKey ===
-          "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpocGpwZW5idGF6dWRxZnJrb2dmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ3MjI4MzAsImV4cCI6MjA3MDI5ODgzMH0.pa_xmaWBACJ_8g-wML6z2DEEPa6tHJbXH6S5NndQt2E"
+        !supabaseUrl.startsWith("https://") ||
+        !supabaseAnonKey.startsWith("eyJ")
       ) {
-        showError("Supabase configuration is missing. Please contact support.");
+        showError("Security configuration error. Please contact support.");
         return;
       }
 
-      const supabase = window.supabase.createClient(
-        supabaseUrl,
-        supabaseAnonKey
-      );
+      let supabase;
+      try {
+        supabase = window.supabase.createClient(supabaseUrl, supabaseAnonKey);
+      } catch (e) {
+        secureLog("error", "Failed to initialize Supabase client", {
+          error: e.message,
+        });
+        showError("Failed to initialize verification service.");
+        return;
+      }
 
-      // Get URL parameters
-      const urlParams = new URLSearchParams(window.location.search);
-      const accessToken = urlParams.get("access_token");
-      const refreshToken = urlParams.get("refresh_token");
-      const type = urlParams.get("type");
-      const error = urlParams.get("error");
+      // Security: Validate and sanitize URL parameters
+      let urlParams, accessToken, refreshToken, type, error;
 
-      console.log("Verification params:", {
-        type,
+      try {
+        urlParams = new URLSearchParams(window.location.search);
+
+        // Sanitize and validate all URL parameters
+        accessToken = sanitizeString(urlParams.get("access_token") || "");
+        refreshToken = sanitizeString(urlParams.get("refresh_token") || "");
+        type = sanitizeString(urlParams.get("type") || "");
+        error = sanitizeString(urlParams.get("error") || "");
+
+        // Validate tokens if present
+        if (accessToken && !validateToken(accessToken)) {
+          throw new Error("Invalid access token format");
+        }
+        if (refreshToken && !validateToken(refreshToken)) {
+          throw new Error("Invalid refresh token format");
+        }
+      } catch (e) {
+        secureLog("error", "URL parameter validation failed", {
+          error: e.message,
+        });
+        showError("Invalid verification link parameters.");
+        return;
+      }
+
+      // Log sanitized verification parameters (no sensitive data)
+      secureLog("info", "Verification attempt", {
         hasAccessToken: !!accessToken,
         hasRefreshToken: !!refreshToken,
-        error,
+        type: type,
+        hasError: !!error,
       });
 
       async function handleVerification() {
+        // Security: Rate limit verification attempts
+        if (!rateLimit("handleVerification", 3, 300000)) {
+          // 3 attempts per 5 minutes
+          showError(
+            "Too many verification attempts. Please wait before trying again."
+          );
+          return;
+        }
+
         try {
-          // Check for errors first
-          if (error) {
-            showError(`Verification failed: ${error}`);
+          // Security: Additional validation before processing
+          if (error && error.length > 100) {
+            secureLog("warn", "Suspicious error parameter length");
+            showError("Invalid verification link.");
             return;
           }
 
-          // If we have tokens, set the session
+          // Check for errors first
+          if (error) {
+            secureLog("info", "Verification failed with error", {
+              errorType: "url_error",
+            });
+            showError(`Verification failed: ${sanitizeString(error)}`);
+            return;
+          }
+
+          // If we have tokens, set the session with additional security checks
           if (accessToken && refreshToken) {
-            console.log("Setting session with tokens...");
+            secureLog("info", "Processing token-based verification");
+
+            // Additional security: Validate token expiration (rough check)
+            try {
+              const tokenPayload = JSON.parse(atob(accessToken.split(".")[1]));
+              const now = Math.floor(Date.now() / 1000);
+
+              if (tokenPayload.exp && tokenPayload.exp < now) {
+                secureLog("warn", "Token expired before verification");
+                showError(
+                  "Verification link has expired. Please request a new one."
+                );
+                return;
+              }
+            } catch (e) {
+              secureLog("warn", "Could not validate token expiration");
+              // Continue anyway, let Supabase handle it
+            }
+
             const { data, error: sessionError } =
               await supabase.auth.setSession({
                 access_token: accessToken,
@@ -304,12 +451,14 @@
               });
 
             if (sessionError) {
-              console.error("Session error:", sessionError);
+              secureLog("error", "Session setup failed", {
+                errorCode: sessionError.message,
+              });
               showError("Failed to verify your account. Please try again.");
               return;
             }
 
-            console.log("Session set successfully:", data);
+            secureLog("info", "Session established successfully");
             showSuccess();
 
             // Try to open the app automatically after a short delay
@@ -318,56 +467,168 @@
             }, 2000);
           } else if (type === "signup") {
             // Email confirmed but no tokens in URL (normal flow)
+            secureLog("info", "Processing signup confirmation");
             showSuccess();
             setTimeout(() => {
               tryOpenApp();
             }, 2000);
           } else {
+            secureLog("warn", "Invalid verification parameters", {
+              type,
+              hasTokens: !!(accessToken && refreshToken),
+            });
             showError(
               "Invalid verification link. Please request a new verification email."
             );
           }
         } catch (err) {
-          console.error("Verification error:", err);
+          secureLog("error", "Unexpected verification error", {
+            errorType: err.name,
+          });
           showError("An unexpected error occurred during verification.");
         }
       }
 
       function tryOpenApp() {
+        // Security: Rate limit app opening attempts
+        if (!rateLimit("tryOpenApp", 2, 10000)) {
+          // 2 attempts per 10 seconds
+          secureLog("info", "App opening rate limited");
+          return;
+        }
+
         const appUrl = "io.supabase.hanapbuhay://login-callback";
-        console.log("Attempting to open app:", appUrl);
 
-        // Try multiple methods to open the app
-        window.location.href = appUrl;
+        // Security: Validate app URL format
+        if (!appUrl.startsWith("io.supabase.hanapbuhay://")) {
+          secureLog("error", "Invalid app URL format");
+          return;
+        }
 
-        // Also try opening in new tab/window as fallback
+        secureLog("info", "Attempting to open mobile app");
+
+        // Clear any existing timers to prevent multiple redirects
+        if (window.appOpenTimer) {
+          clearTimeout(window.appOpenTimer);
+        }
+
+        // Try multiple methods to open the app with security checks
+        try {
+          // Method 1: Direct location change (most reliable for mobile)
+          window.location.href = appUrl;
+        } catch (e) {
+          secureLog("warn", "Direct location change failed", {
+            error: e.message,
+          });
+        }
+
+        // Method 2: Hidden iframe approach (works on some mobile browsers)
         setTimeout(() => {
-          const newTab = window.open(appUrl, "_blank");
-          if (newTab) {
-            newTab.focus();
+          try {
+            const iframe = document.createElement("iframe");
+            iframe.style.display = "none";
+            iframe.src = appUrl;
+            document.body.appendChild(iframe);
+
+            // Clean up after a delay
+            setTimeout(() => {
+              if (iframe.parentNode) {
+                iframe.parentNode.removeChild(iframe);
+              }
+            }, 2000);
+          } catch (e) {
+            secureLog("warn", "Iframe method failed", { error: e.message });
           }
         }, 500);
+
+        // Method 3: New tab/window as last resort (desktop browsers)
+        window.appOpenTimer = setTimeout(() => {
+          try {
+            const newTab = window.open(appUrl, "_blank", "noopener,noreferrer");
+            if (newTab) {
+              newTab.focus();
+              // Close the tab after a delay if it didn't redirect to the app
+              setTimeout(() => {
+                try {
+                  newTab.close();
+                } catch (e) {
+                  // Tab may have already navigated or been closed
+                }
+              }, 3000);
+            }
+          } catch (e) {
+            secureLog("warn", "New tab method failed", { error: e.message });
+          }
+        }, 1000);
       }
 
       function showSuccess() {
+        // Security: Clear sensitive data from memory
+        accessToken = null;
+        refreshToken = null;
+
         document.getElementById("loadingState").style.display = "none";
         document.getElementById("successState").style.display = "block";
         document.getElementById("errorState").style.display = "none";
         document.getElementById("pageTitle").textContent = "✅ Email Verified!";
 
-        // Update app link
-        document.getElementById("appLink").href =
-          "io.supabase.hanapbuhay://login-callback";
+        // Update app link with security validation
+        const appLink = document.getElementById("appLink");
+        if (appLink) {
+          appLink.href = "io.supabase.hanapbuhay://login-callback";
+          // Security: Add click tracking for analytics (without sensitive data)
+          appLink.addEventListener("click", () => {
+            secureLog("info", "User clicked app link manually");
+          });
+        }
+
+        secureLog("info", "Verification success displayed to user");
       }
 
       function showError(message) {
+        // Security: Sanitize error message before display
+        const sanitizedMessage = sanitizeString(message).substring(0, 200);
+
+        // Security: Clear sensitive data on error
+        accessToken = null;
+        refreshToken = null;
+
         document.getElementById("loadingState").style.display = "none";
-        document.getElementById("successState").style.display = "block";
-        document.getElementById("errorState").style.display = "none";
+        document.getElementById("successState").style.display = "none";
+        document.getElementById("errorState").style.display = "block";
         document.getElementById("pageTitle").textContent =
           "❌ Verification Failed";
-        document.getElementById("errorMessage").textContent = message;
+
+        const errorElement = document.getElementById("errorMessage");
+        if (errorElement) {
+          errorElement.textContent = sanitizedMessage;
+        }
+
+        secureLog("warn", "Verification error displayed to user", {
+          errorLength: sanitizedMessage.length,
+        });
       }
+
+      // Security: Cleanup sensitive data on page unload
+      window.addEventListener("beforeunload", () => {
+        accessToken = null;
+        refreshToken = null;
+        if (window.appOpenTimer) {
+          clearTimeout(window.appOpenTimer);
+        }
+      });
+
+      // Security: Prevent context menu and right-click (optional, for additional security)
+      document.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        return false;
+      });
+
+      // Security: Prevent drag operations
+      document.addEventListener("dragstart", (e) => {
+        e.preventDefault();
+        return false;
+      });
 
       // Start verification process
       handleVerification();
