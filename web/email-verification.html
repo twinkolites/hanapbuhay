@@ -254,12 +254,14 @@
 
     <script>
       // Initialize Supabase (you'll need to replace these with your actual values)
-      const supabaseUrl = "YOUR_SUPABASE_URL";
-      const supabaseAnonKey = "YOUR_SUPABASE_ANON_KEY";
+      const supabaseUrl = "https://jhpjpenbtazudqfrkogf.supabase.co";
+      const supabaseAnonKey =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpocGpwZW5idGF6dWRxZnJrb2dmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ3MjI4MzAsImV4cCI6MjA3MDI5ODgzMH0.pa_xmaWBACJ_8g-wML6z2DEEPa6tHJbXH6S5NndQt2E";
 
       if (
-        supabaseUrl === "YOUR_SUPABASE_URL" ||
-        supabaseAnonKey === "YOUR_SUPABASE_ANON_KEY"
+        supabaseUrl === "https://jhpjpenbtazudqfrkogf.supabase.co" ||
+        supabaseAnonKey ===
+          "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpocGpwZW5idGF6dWRxZnJrb2dmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ3MjI4MzAsImV4cCI6MjA3MDI5ODgzMH0.pa_xmaWBACJ_8g-wML6z2DEEPa6tHJbXH6S5NndQt2E"
       ) {
         showError("Supabase configuration is missing. Please contact support.");
         return;
