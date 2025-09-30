@@ -461,17 +461,14 @@
             secureLog("info", "Session established successfully");
             showSuccess();
 
-            // Try to open the app automatically after a short delay
-            setTimeout(() => {
-              tryOpenApp();
-            }, 2000);
+            // Note: Don't auto-open app after verification
+            // User can manually click "Open Hanapbuhay App" button
+            // This prevents conflicts with the hybrid verification flow
           } else if (type === "signup") {
             // Email confirmed but no tokens in URL (normal flow)
             secureLog("info", "Processing signup confirmation");
             showSuccess();
-            setTimeout(() => {
-              tryOpenApp();
-            }, 2000);
+            // Note: Don't auto-open app - let user manually open via button
           } else {
             secureLog("warn", "Invalid verification parameters", {
               type,
@@ -497,7 +494,7 @@
           return;
         }
 
-        const appUrl = "io.supabase.hanapbuhay://login-callback";
+        const appUrl = "io.supabase.hanapbuhay://";
 
         // Security: Validate app URL format
         if (!appUrl.startsWith("io.supabase.hanapbuhay://")) {
@@ -575,7 +572,7 @@
         // Update app link with security validation
         const appLink = document.getElementById("appLink");
         if (appLink) {
-          appLink.href = "io.supabase.hanapbuhay://login-callback";
+          appLink.href = "io.supabase.hanapbuhay://";
           // Security: Add click tracking for analytics (without sensitive data)
           appLink.addEventListener("click", () => {
             secureLog("info", "User clicked app link manually");

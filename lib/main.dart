@@ -142,8 +142,7 @@ class _MyAppState extends State<MyApp> {
         return;
       }
 
-      // Disabled: Recovery deep links are not needed for OTP flow
-      // We handle OTP verification directly in the app
+      // Handle different deep link scenarios for hybrid verification flow
 
       if (type == 'signup' && accessToken != null) {
         print('🔗 Email confirmation detected'); // Debug print
@@ -152,16 +151,76 @@ class _MyAppState extends State<MyApp> {
         // Handle generic auth callback with access token
         print('🔗 Generic auth callback detected'); // Debug print
         _handleEmailConfirmation(accessToken, refreshToken);
+      } else if (type == 'recovery' && accessToken != null) {
+        // Handle password recovery (if needed in future)
+        print('🔗 Password recovery detected'); // Debug print
+        _handleEmailConfirmation(accessToken, refreshToken);
       } else {
-        print('🔗 No access token found in deep link'); // Debug print
-        _showAuthError(
-          'invalid_token',
-          'No access token found in the confirmation link',
-        );
+        // No tokens found - this could be a manual app open from web verification
+        // Just navigate to the appropriate screen based on auth state
+        print('🔗 App opened without tokens - checking auth state'); // Debug print
+        _handleAppOpenWithoutTokens();
       }
     } else {
       print('🔗 Scheme does not match expected patterns'); // Debug print
     }
+  }
+
+  void _handleAppOpenWithoutTokens() {
+    // Handle when app is opened without tokens (e.g., from web verification page)
+    // Check current auth state and navigate appropriately
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final context = _navigatorKey.currentContext;
+      if (context != null) {
+        final currentUser = supabase.auth.currentUser;
+        if (currentUser != null && currentUser.emailConfirmedAt != null) {
+          // User is verified and logged in - go to home
+          print('✅ User verified and logged in - navigating to home'); // Debug print
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const ApplicantHomeScreen()),
+          );
+        } else if (currentUser != null && currentUser.emailConfirmedAt == null) {
+          // User logged in but not verified - show verification needed
+          print('⚠️ User logged in but not verified'); // Debug print
+          _showVerificationNeeded(context);
+        } else {
+          // No user logged in - go to login
+          print('🔐 No user logged in - navigating to login'); // Debug print
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const LoginScreen()),
+          );
+        }
+      }
+    });
+  }
+
+  void _showVerificationNeeded(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Email Verification Required',
+          style: TextStyle(color: Color(0xFF013237), fontWeight: FontWeight.bold),
+        ),
+        content: const Text(
+          'Your account needs email verification. Please check your email and click the verification link.',
+          style: TextStyle(color: Color(0xFF013237)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'OK',
+              style: TextStyle(color: Color(0xFF4CA771)),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _handleEmailConfirmation(String accessToken, String? refreshToken) {
