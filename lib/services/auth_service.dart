@@ -58,9 +58,8 @@ class AuthService {
           'birthday': birthday,
           'role': 'applicant', // Explicitly set default role
         },
-        // Note: You'll need to host the email-verification.html page on a public URL
-        // For now, using a placeholder - replace with your actual hosted URL
-        emailRedirectTo: 'https://your-domain.com/email-verification.html',
+        // GitHub Pages URL for cross-device email verification
+        emailRedirectTo: 'https://twinkolites.github.io/hanapbuhay/',
       );
 
       if (response.user != null) {
