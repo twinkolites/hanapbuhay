@@ -176,14 +176,11 @@ class _MyAppState extends State<MyApp> {
       if (context != null) {
         final currentUser = supabase.auth.currentUser;
         if (currentUser != null && currentUser.emailConfirmedAt != null) {
-          // User is verified and logged in - go to home
+          // User is verified - show success message and go to login for security
           print(
-            '✅ User verified and logged in - navigating to home',
+            '✅ User verified from web - showing success then login for security',
           ); // Debug print
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (context) => const HomeScreen()),
-          );
+          _showWebVerificationSuccess(context);
         } else if (currentUser != null &&
             currentUser.emailConfirmedAt == null) {
           // User logged in but not verified - show verification needed
@@ -199,6 +196,72 @@ class _MyAppState extends State<MyApp> {
         }
       }
     });
+  }
+
+  void _showWebVerificationSuccess(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Email Verified Successfully!',
+          style: TextStyle(
+            color: Color(0xFF013237),
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Your email has been verified! For security, please sign in with your password.',
+              style: TextStyle(color: Color(0xFF013237)),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEAF9E7),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFC0E6BA), width: 1),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.security, color: Color(0xFF4CA771), size: 20),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'This extra step keeps your account secure.',
+                      style: TextStyle(color: Color(0xFF013237), fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (context) => const LoginScreen()),
+              );
+            },
+            child: const Text(
+              'Sign In',
+              style: TextStyle(
+                color: Color(0xFF4CA771),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showVerificationNeeded(BuildContext context) {
