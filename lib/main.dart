@@ -158,7 +158,9 @@ class _MyAppState extends State<MyApp> {
       } else {
         // No tokens found - this could be a manual app open from web verification
         // Just navigate to the appropriate screen based on auth state
-        print('🔗 App opened without tokens - checking auth state'); // Debug print
+        print(
+          '🔗 App opened without tokens - checking auth state',
+        ); // Debug print
         _handleAppOpenWithoutTokens();
       }
     } else {
@@ -175,12 +177,15 @@ class _MyAppState extends State<MyApp> {
         final currentUser = supabase.auth.currentUser;
         if (currentUser != null && currentUser.emailConfirmedAt != null) {
           // User is verified and logged in - go to home
-          print('✅ User verified and logged in - navigating to home'); // Debug print
+          print(
+            '✅ User verified and logged in - navigating to home',
+          ); // Debug print
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (context) => const ApplicantHomeScreen()),
+            MaterialPageRoute(builder: (context) => const HomeScreen()),
           );
-        } else if (currentUser != null && currentUser.emailConfirmedAt == null) {
+        } else if (currentUser != null &&
+            currentUser.emailConfirmedAt == null) {
           // User logged in but not verified - show verification needed
           print('⚠️ User logged in but not verified'); // Debug print
           _showVerificationNeeded(context);
@@ -204,7 +209,10 @@ class _MyAppState extends State<MyApp> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text(
           'Email Verification Required',
-          style: TextStyle(color: Color(0xFF013237), fontWeight: FontWeight.bold),
+          style: TextStyle(
+            color: Color(0xFF013237),
+            fontWeight: FontWeight.bold,
+          ),
         ),
         content: const Text(
           'Your account needs email verification. Please check your email and click the verification link.',
@@ -213,10 +221,7 @@ class _MyAppState extends State<MyApp> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text(
-              'OK',
-              style: TextStyle(color: Color(0xFF4CA771)),
-            ),
+            child: const Text('OK', style: TextStyle(color: Color(0xFF4CA771))),
           ),
         ],
       ),
