@@ -773,8 +773,8 @@ class _RegisterScreenState extends State<RegisterScreen>
           // Display Name
           _buildTextField(
             controller: _displayNameController,
-            label: 'Display Name',
-            hint: 'Enter your display name (optional)',
+            label: 'Display Name (Optional)',
+            hint: 'Enter your display name',
             icon: Icons.badge_outlined,
           ),
           const SizedBox(height: 15),
@@ -823,13 +823,12 @@ class _RegisterScreenState extends State<RegisterScreen>
             keyboardType: TextInputType.emailAddress,
             onChanged: _validateEmail,
             validator: (value) {
-              if (value == null || value.trim().isEmpty) {
-                return 'Email is required';
-              }
-              if (!RegExp(
-                r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
-              ).hasMatch(value.trim())) {
-                return 'Please enter a valid email address';
+              // Use comprehensive security validation from InputSecurityService
+              final emailError = InputSecurityService.validateSecureEmail(
+                value,
+              );
+              if (emailError != null) {
+                return emailError;
               }
               return null;
             },
