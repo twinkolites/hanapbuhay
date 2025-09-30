@@ -347,8 +347,8 @@
           sessionId: generateSecureId(),
           userAgent: navigator.userAgent.substring(0, 100),
           url: window.location.href,
-          referrer: document.referrer || 'none',
-          ...sanitizedData
+          referrer: document.referrer || "none",
+          ...sanitizedData,
         };
 
         console[level](`[ENTERPRISE_SECURITY] ${message}`, securityContext);
@@ -359,7 +359,12 @@
 
       // Security: Generate secure session IDs
       function generateSecureId() {
-        return 'sec_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 9);
+        return (
+          "sec_" +
+          Date.now().toString(36) +
+          "_" +
+          Math.random().toString(36).substr(2, 9)
+        );
       }
 
       // Security: Store security events (in production, send to security monitoring service)
@@ -369,7 +374,7 @@
           level,
           message,
           context,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
 
         // Limit stored events to prevent memory issues
@@ -407,18 +412,24 @@
       }
 
       // Security: Validate and sanitize URL parameters
-      let urlParams, accessToken, refreshToken, type, error;
+      let urlParams, accessToken, refreshToken, type, error, code;
 
       try {
         urlParams = new URLSearchParams(window.location.search);
 
-        // Sanitize and validate all URL parameters
+        // Handle both Supabase parameter formats
+        // Legacy format: access_token, refresh_token, type, error
+        // New format: code (for email verification)
+        code = sanitizeString(urlParams.get("code") || "");
         accessToken = sanitizeString(urlParams.get("access_token") || "");
         refreshToken = sanitizeString(urlParams.get("refresh_token") || "");
         type = sanitizeString(urlParams.get("type") || "");
         error = sanitizeString(urlParams.get("error") || "");
 
-        // Validate tokens if present
+        // Validate parameters
+        if (code && code.length < 10) {
+          throw new Error("Invalid verification code format");
+        }
         if (accessToken && !validateToken(accessToken)) {
           throw new Error("Invalid access token format");
         }
@@ -435,6 +446,7 @@
 
       // Log sanitized verification parameters (no sensitive data)
       secureLog("info", "Verification attempt", {
+        hasCode: !!code,
         hasAccessToken: !!accessToken,
         hasRefreshToken: !!refreshToken,
         type: type,
@@ -468,8 +480,39 @@
             return;
           }
 
-          // If we have tokens, set the session with additional security checks
-          if (accessToken && refreshToken) {
+          // Handle different verification scenarios
+          if (code) {
+            // Supabase email verification using code
+            secureLog("info", "Processing code-based email verification");
+
+            try {
+              const { data, error: verifyError } = await supabase.auth.verifyOtp({
+                token: code,
+                type: 'email',
+              });
+
+              if (verifyError) {
+                secureLog("error", "Email verification failed", {
+                  errorCode: verifyError.message,
+                });
+                showError("Failed to verify your email. Please try again.");
+                return;
+              }
+
+              secureLog("info", "Email verification successful");
+              showSuccess();
+
+              // Try to open the app automatically after a short delay
+              setTimeout(() => {
+                tryOpenApp();
+              }, 2000);
+            } catch (e) {
+              secureLog("error", "Verification process error", {
+                error: e.message,
+              });
+              showError("An error occurred during verification.");
+            }
+          } else if (accessToken && refreshToken) {
             secureLog("info", "Processing token-based verification");
 
             // Additional security: Validate token expiration (rough check)
@@ -644,7 +687,8 @@
         document.getElementById("loadingState").style.display = "none";
         document.getElementById("successState").style.display = "none";
         document.getElementById("errorState").style.display = "block";
-        document.getElementById("pageTitle").textContent = "🚫 Access Denied - Security Protection Active";
+        document.getElementById("pageTitle").textContent =
+          "🚫 Access Denied - Security Protection Active";
 
         const errorElement = document.getElementById("errorMessage");
         if (errorElement) {
@@ -706,7 +750,9 @@
         // Hide default error button since we have custom actions
         const errorState = document.getElementById("errorState");
         if (errorState) {
-          const buttonContainer = errorState.querySelector('[style*="text-align: center"]');
+          const buttonContainer = errorState.querySelector(
+            '[style*="text-align: center"]'
+          );
           if (buttonContainer) {
             buttonContainer.style.display = "none";
           }
@@ -721,7 +767,7 @@
           ipAddress: "client_side_logging",
           securityLevel: "maximum",
           threatLevel: "low",
-          action: "access_denied"
+          action: "access_denied",
         });
       }
 
