@@ -6,53 +6,35 @@
     <title>Email Verification - Hanapbuhay</title>
 
     <!-- Security Headers (Meta Tag Implementation) -->
-    <meta http-equiv="X-Frame-Options" content="DENY" />
     <meta http-equiv="X-Content-Type-Options" content="nosniff" />
     <meta http-equiv="X-XSS-Protection" content="1; mode=block" />
     <meta
       http-equiv="Referrer-Policy"
       content="strict-origin-when-cross-origin"
     />
-    <meta
-      http-equiv="Permissions-Policy"
-      content="geolocation=(), microphone=(), camera=()"
-    />
 
-    <!-- Enterprise Content Security Policy - Maximum Protection -->
+    <!-- Basic Content Security Policy -->
     <meta
       http-equiv="Content-Security-Policy"
       content="
-      default-src 'none';
-      script-src 'self' https://unpkg.com 'unsafe-inline';
+      default-src 'self';
+      script-src 'self' 'unsafe-inline' https://unpkg.com;
       style-src 'self' 'unsafe-inline';
       img-src 'self' data:;
       font-src 'self';
-      connect-src https://jhpjpenbtazudqfrkogf.supabase.co wss://jhpjpenbtazudqfrkogf.supabase.co;
-      frame-ancestors 'none';
+      connect-src 'self' https://jhpjpenbtazudqfrkogf.supabase.co wss://jhpjpenbtazudqfrkogf.supabase.co;
+      frame-src 'none';
       base-uri 'self';
       form-action 'none';
-      upgrade-insecure-requests;
-      block-all-mixed-content;
-      report-uri /csp-violation-report-endpoint;
     "
     />
-
-    <!-- Additional Enterprise Security Headers -->
-    <meta http-equiv="X-Permitted-Cross-Domain-Policies" content="none" />
-    <meta http-equiv="Cross-Origin-Embedder-Policy" content="require-corp" />
-    <meta http-equiv="Cross-Origin-Opener-Policy" content="same-origin" />
-    <meta http-equiv="Cross-Origin-Resource-Policy" content="same-origin" />
 
     <!-- Additional Security Meta Tags -->
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <meta name="robots" content="noindex, nofollow, noarchive, nosnippet" />
 
     <!-- Supabase SDK -->
-    <script
-      src="https://unpkg.com/@supabase/supabase-js@2"
-      integrity="sha384-xxx"
-      crossorigin="anonymous"
-    ></script>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
     <style>
       body {
         font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
@@ -387,18 +369,19 @@
       }
 
       // Initialize Supabase with security checks
-      const supabaseUrl = "https://jhpjpenbtazudqfrkogf.supabase.co";
-      const supabaseAnonKey =
-        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpocGpwZW5idGF6dWRxZnJrb2dmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ3MjI4MzAsImV4cCI6MjA3MDI5ODgzMH0.pa_xmaWBACJ_8g-wML6z2DEEPa6tHJbXH6S5NndQt2E";
+      (function() {
+        const supabaseUrl = "https://jhpjpenbtazudqfrkogf.supabase.co";
+        const supabaseAnonKey =
+          "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpocGpwZW5idGF6dWRxZnJrb2dmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ3MjI4MzAsImV4cCI6MjA3MDI5ODgzMH0.pa_xmaWBACJ_8g-wML6z2DEEPa6tHJbXH6S5NndQt2E";
 
-      // Security validation
-      if (
-        !supabaseUrl.startsWith("https://") ||
-        !supabaseAnonKey.startsWith("eyJ")
-      ) {
-        showError("Security configuration error. Please contact support.");
-        return;
-      }
+        // Security validation
+        if (
+          !supabaseUrl.startsWith("https://") ||
+          !supabaseAnonKey.startsWith("eyJ")
+        ) {
+          showError("Security configuration error. Please contact support.");
+          return;
+        }
 
       let supabase;
       try {
@@ -485,54 +468,64 @@
             // Supabase email verification using code
             secureLog("info", "Processing code-based email verification", {
               codeLength: code.length,
-              codePrefix: code.substring(0, 8) + "..."
+              codePrefix: code.substring(0, 8) + "...",
             });
 
             try {
               // Try verifyOtp first (for magic link/email verification)
-              const { data, error: verifyError } = await supabase.auth.verifyOtp({
-                token: code,
-                type: "email",
-              });
+              const { data, error: verifyError } =
+                await supabase.auth.verifyOtp({
+                  token: code,
+                  type: "email",
+                });
 
               if (verifyError) {
-                secureLog("warn", "verifyOtp failed, trying exchangeCodeForSession", {
-                  errorCode: verifyError.message,
-                  errorName: verifyError.name
-                });
+                secureLog(
+                  "warn",
+                  "verifyOtp failed, trying exchangeCodeForSession",
+                  {
+                    errorCode: verifyError.message,
+                    errorName: verifyError.name,
+                  }
+                );
 
                 // If verifyOtp fails, try exchangeCodeForSession (for PKCE flow)
                 try {
-                  const { data: sessionData, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+                  const { data: sessionData, error: exchangeError } =
+                    await supabase.auth.exchangeCodeForSession(code);
 
                   if (exchangeError) {
                     secureLog("error", "Both verification methods failed", {
                       verifyOtpError: verifyError.message,
-                      exchangeError: exchangeError.message
+                      exchangeError: exchangeError.message,
                     });
                     showError("Failed to verify your email. Please try again.");
                     return;
                   }
 
-                  secureLog("info", "Email verification successful via exchangeCodeForSession");
+                  secureLog(
+                    "info",
+                    "Email verification successful via exchangeCodeForSession"
+                  );
                   showSuccess();
 
                   // Try to open the app automatically after a short delay
                   setTimeout(() => {
                     tryOpenApp();
                   }, 2000);
-
                 } catch (exchangeException) {
                   secureLog("error", "exchangeCodeForSession exception", {
-                    error: exchangeException.message
+                    error: exchangeException.message,
                   });
                   showError("Failed to verify your email. Please try again.");
                   return;
                 }
-
               } else {
                 // verifyOtp succeeded
-                secureLog("info", "Email verification successful via verifyOtp");
+                secureLog(
+                  "info",
+                  "Email verification successful via verifyOtp"
+                );
                 showSuccess();
 
                 // Try to open the app automatically after a short delay
@@ -540,12 +533,11 @@
                   tryOpenApp();
                 }, 2000);
               }
-
             } catch (e) {
               secureLog("error", "Verification process error", {
                 error: e.message,
                 errorType: e.name,
-                stack: e.stack ? e.stack.substring(0, 200) : "no stack"
+                stack: e.stack ? e.stack.substring(0, 200) : "no stack",
               });
               showError("An error occurred during verification: " + e.message);
             }
@@ -853,16 +845,17 @@
         return false;
       });
 
-      // Check if this is direct access (no URL parameters)
-      const hasAnyParams = window.location.search.length > 1;
-      if (!hasAnyParams) {
-        // Direct access - show helpful message immediately
-        secureLog("info", "Direct page access detected - showing help message");
-        showDirectAccess();
-      } else {
-        // Has parameters - start verification process
-        handleVerification();
-      }
+        // Check if this is direct access (no URL parameters)
+        const hasAnyParams = window.location.search.length > 1;
+        if (!hasAnyParams) {
+          // Direct access - show helpful message immediately
+          secureLog("info", "Direct page access detected - showing help message");
+          showDirectAccess();
+        } else {
+          // Has parameters - start verification process
+          handleVerification();
+        }
+      })();
     </script>
   </body>
 </html>
