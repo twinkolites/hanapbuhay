@@ -34,9 +34,11 @@ class EmployerRegistrationService {
 
       // Validate email
       debugPrint('📧 Validating email: ${registrationData.email}');
-      if (InputSecurityService.validateSecureEmail(registrationData.email) != true) {
-        debugPrint('❌ Email validation failed');
-        throw Exception('Invalid email format');
+      final emailValidationResult = InputSecurityService.validateSecureEmail(registrationData.email);
+      if (emailValidationResult != null) {
+        debugPrint('❌ Email validation failed: $emailValidationResult');
+        debugPrint('❌ Email details - Length: ${registrationData.email.length}, Contains @: ${registrationData.email.contains('@')}, Contains .: ${registrationData.email.contains('.')}');
+        throw Exception('Invalid email format: $emailValidationResult');
       }
       debugPrint('✅ Email validation passed: ${registrationData.email}');
 
@@ -114,93 +116,96 @@ class EmployerRegistrationService {
       final session = authResponse.session;
       debugPrint('🔍 Auth session: ${session != null ? 'Present' : 'Missing'}');
       
-      // Create profile, company, and verification records regardless of session status
+      // Handle profile creation based on session availability
       debugPrint('🏢 Creating profile, company, and verification records for user: $userId');
       
-      // First, create/update the user profile with employer role
-      debugPrint('👤 Creating/updating user profile with employer role');
-      final profileData = {
-        'id': userId,
-        'email': registrationData.email.trim().toLowerCase(),
-        'full_name': registrationData.fullName.trim(),
-        'display_name': registrationData.displayName?.trim() ?? registrationData.fullName.trim(),
-        'username': registrationData.username?.trim().toLowerCase(),
-        'phone_number': registrationData.phoneNumber?.trim(),
-        'birthday': registrationData.birthday?.toIso8601String(),
-        'role': 'employer', // Set role as employer
-        'created_at': DateTime.now().toIso8601String(),
-        'updated_at': DateTime.now().toIso8601String(),
-      };
-
+      // Always update the profile to employer role (Supabase Auth creates default 'applicant' profile)
+      debugPrint('👤 Updating user profile to employer role');
       try {
         await _supabase
             .from('profiles')
-            .upsert(profileData);
+            .update({
+              'email': registrationData.email.trim().toLowerCase(),
+              'full_name': registrationData.fullName.trim(),
+              'display_name': registrationData.displayName?.trim() ?? registrationData.fullName.trim(),
+              'username': registrationData.username?.trim().toLowerCase(),
+              'phone_number': registrationData.phoneNumber?.trim(),
+              'birthday': registrationData.birthday?.toIso8601String(),
+              'role': 'employer', // Set role as employer
+              'updated_at': DateTime.now().toIso8601String(),
+            })
+            .eq('id', userId);
 
-        debugPrint('✅ User profile created/updated with employer role');
+        debugPrint('✅ User profile updated with employer role');
       } catch (e) {
-        debugPrint('❌ Error creating/updating profile: $e');
-        debugPrint('❌ Profile data: ${profileData.toString()}');
-        rethrow;
+        debugPrint('❌ Error updating profile: $e');
+        debugPrint('❌ User ID: $userId');
+        // Don't rethrow - profile might be updated later after email verification
+        debugPrint('⚠️ Profile update failed, will retry after email verification');
       }
 
-      // Create company profile
-      final companyData = {
-        'owner_id': userId,
-        'name': registrationData.companyName.trim(),
-        'about': registrationData.companyAbout.trim(),
-        'logo_url': registrationData.companyLogoUrl,
-        'profile_url': registrationData.companyProfileUrl,
-        'is_public': false, // Initially private until approved
-        'created_at': DateTime.now().toIso8601String(),
-      };
+      String? companyId;
+      
+      if (session != null) {
+        // Create company profile only if we have a session
+        final companyData = {
+          'owner_id': userId,
+          'name': registrationData.companyName.trim(),
+          'about': registrationData.companyAbout.trim(),
+          'logo_url': registrationData.companyLogoUrl,
+          'profile_url': registrationData.companyProfileUrl,
+          'is_public': false, // Initially private until approved
+          'created_at': DateTime.now().toIso8601String(),
+        };
 
-      debugPrint('🏢 Creating company with data: $companyData');
+        debugPrint('🏢 Creating company with data: $companyData');
 
-      String companyId;
-      try {
-        final companyResponse = await _supabase
-            .from('companies')
-            .insert(companyData)
-            .select()
-            .single();
+        try {
+          final companyResponse = await _supabase
+              .from('companies')
+              .insert(companyData)
+              .select()
+              .single();
 
-        companyId = companyResponse['id'] as String;
-        debugPrint('✅ Company profile created: $companyId');
-      } catch (e) {
-        debugPrint('❌ Error creating company: $e');
-        debugPrint('❌ Company data: $companyData');
-        debugPrint('❌ Current user: ${_supabase.auth.currentUser?.id}');
-        rethrow;
-      }
+          companyId = companyResponse['id'] as String;
+          debugPrint('✅ Company profile created: $companyId');
+        } catch (e) {
+          debugPrint('❌ Error creating company: $e');
+          debugPrint('❌ Company data: $companyData');
+          debugPrint('❌ Current user: ${_supabase.auth.currentUser?.id}');
+          rethrow;
+        }
 
-      // Create employer verification record
-      final verificationData = {
-        'employer_id': userId,
-        'company_id': companyId,
-        'business_license_number': registrationData.businessLicenseNumber,
-        'tax_id_number': registrationData.taxIdNumber,
-        'business_registration_number': registrationData.businessRegistrationNumber,
-        'business_license_url': registrationData.businessLicenseUrl,
-        'tax_id_document_url': registrationData.taxIdDocumentUrl,
-        'business_registration_url': registrationData.businessRegistrationUrl,
-        'verification_status': 'pending',
-        'submitted_at': DateTime.now().toIso8601String(),
-        'created_at': DateTime.now().toIso8601String(),
-      };
+        // Create employer verification record only if we have a session
+        final verificationData = {
+          'employer_id': userId,
+          'company_id': companyId,
+          'business_license_number': registrationData.businessLicenseNumber,
+          'tax_id_number': registrationData.taxIdNumber,
+          'business_registration_number': registrationData.businessRegistrationNumber,
+          'business_license_url': registrationData.businessLicenseUrl,
+          'tax_id_document_url': registrationData.taxIdDocumentUrl,
+          'business_registration_url': registrationData.businessRegistrationUrl,
+          'verification_status': 'pending',
+          'submitted_at': DateTime.now().toIso8601String(),
+          'created_at': DateTime.now().toIso8601String(),
+        };
 
-      debugPrint('📋 Creating employer verification record: $verificationData');
+        debugPrint('📋 Creating employer verification record: $verificationData');
 
-      try {
-        await _supabase
-            .from('employer_verification')
-            .insert(verificationData);
+        try {
+          await _supabase
+              .from('employer_verification')
+              .insert(verificationData);
 
-        debugPrint('✅ Employer verification record created successfully');
-      } catch (e) {
-        debugPrint('❌ Error creating verification record: $e');
-        debugPrint('❌ Verification data: $verificationData');
-        rethrow;
+          debugPrint('✅ Employer verification record created successfully');
+        } catch (e) {
+          debugPrint('❌ Error creating verification record: $e');
+          debugPrint('❌ Verification data: $verificationData');
+          rethrow;
+        }
+      } else {
+        debugPrint('⚠️ No session available - company and verification records will be created after email verification');
       }
 
       // Log admin action
@@ -302,31 +307,28 @@ class EmployerRegistrationService {
       final userId = user.id;
       debugPrint('✅ User authenticated: $userId');
       
-      // First, create/update the user profile with employer role
-      debugPrint('👤 Creating/updating user profile with employer role');
-      final profileData = {
-        'id': userId,
-        'email': registrationData.email.trim().toLowerCase(),
-        'full_name': registrationData.fullName.trim(),
-        'display_name': registrationData.displayName?.trim() ?? registrationData.fullName.trim(),
-        'username': registrationData.username?.trim().toLowerCase(),
-        'phone_number': registrationData.phoneNumber?.trim(),
-        'birthday': registrationData.birthday?.toIso8601String(),
-        'role': 'employer', // Set role as employer
-        'created_at': DateTime.now().toIso8601String(),
-        'updated_at': DateTime.now().toIso8601String(),
-      };
-
+      // Update the profile to employer role (Supabase Auth creates default 'applicant' profile)
+      debugPrint('👤 Updating user profile to employer role');
       try {
         await _supabase
             .from('profiles')
-            .upsert(profileData);
+            .update({
+              'email': registrationData.email.trim().toLowerCase(),
+              'full_name': registrationData.fullName.trim(),
+              'display_name': registrationData.displayName?.trim() ?? registrationData.fullName.trim(),
+              'username': registrationData.username?.trim().toLowerCase(),
+              'phone_number': registrationData.phoneNumber?.trim(),
+              'birthday': registrationData.birthday?.toIso8601String(),
+              'role': 'employer', // Set role as employer
+              'updated_at': DateTime.now().toIso8601String(),
+            })
+            .eq('id', userId);
 
-        debugPrint('✅ User profile created/updated with employer role');
+        debugPrint('✅ User profile updated with employer role');
       } catch (e) {
-        debugPrint('❌ Error creating/updating profile: $e');
-        debugPrint('❌ Profile data: ${profileData.toString()}');
-        throw Exception('Failed to create/update user profile: $e');
+        debugPrint('❌ Error updating profile: $e');
+        debugPrint('❌ User ID: $userId');
+        throw Exception('Failed to update user profile: $e');
       }
       
       // Create company profile

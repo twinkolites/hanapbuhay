@@ -387,10 +387,10 @@ class InputSecurityService {
       return 'This email format appears suspicious. Please use a valid email address.';
     }
 
-    // Maximum suspicious pattern detection
-    final suspiciousCheck = detectSuspiciousPatterns(trimmed, 'Email address');
-    if (suspiciousCheck != null) {
-      return suspiciousCheck;
+    // Only check for obvious security issues, not general suspicious patterns
+    // This prevents legitimate emails from being flagged
+    if (trimmed.contains('<') || trimmed.contains('>') || trimmed.contains('"')) {
+      return 'Email address contains invalid characters';
     }
 
     return null;

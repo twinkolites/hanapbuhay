@@ -5,33 +5,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Email Verification - Hanapbuhay</title>
 
-    <!-- Security Headers (Meta Tag Implementation) -->
+    <!-- Essential Security Headers -->
     <meta http-equiv="X-Content-Type-Options" content="nosniff" />
     <meta http-equiv="X-XSS-Protection" content="1; mode=block" />
-    <meta
-      http-equiv="Referrer-Policy"
-      content="strict-origin-when-cross-origin"
-    />
+    <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin" />
 
-    <!-- Basic Content Security Policy -->
+    <!-- Content Security Policy -->
     <meta
       http-equiv="Content-Security-Policy"
       content="
       default-src 'self';
       script-src 'self' 'unsafe-inline' https://unpkg.com;
       style-src 'self' 'unsafe-inline';
-      img-src 'self' data:;
+      img-src 'self' data: https:;
       font-src 'self';
       connect-src 'self' https://jhpjpenbtazudqfrkogf.supabase.co wss://jhpjpenbtazudqfrkogf.supabase.co;
       frame-src 'none';
       base-uri 'self';
-      form-action 'none';
     "
     />
 
-    <!-- Additional Security Meta Tags -->
-    <meta name="referrer" content="strict-origin-when-cross-origin" />
-    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet" />
+    <!-- SEO and Privacy -->
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="description" content="Email verification for Hanapbuhay - Connecting Filipino job seekers with employers nationwide" />
 
     <!-- Supabase SDK -->
     <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
@@ -289,361 +285,173 @@
     </div>
 
     <script>
-      // Security: Input sanitization and validation functions
+      // Simple logging function
+      function log(level, message, data = {}) {
+        console[level](`[HANAPBUHAY_VERIFICATION] ${message}`, data);
+      }
+
+      // Input sanitization for security
       function sanitizeString(input) {
         if (typeof input !== "string") return "";
-        // Remove potentially dangerous characters and limit length
-        return input.replace(/[<>'"&]/g, "").substring(0, 1000);
+        return input.replace(/[<>'"&]/g, "").substring(0, 500);
       }
 
-      function validateToken(token) {
-        if (!token || typeof token !== "string") return false;
-        // Basic JWT-like validation (should be 3 parts separated by dots)
-        const parts = token.split(".");
-        return parts.length === 3 && parts.every((part) => part.length > 0);
-      }
-
-      // Security: Rate limiting for function calls
-      const callTracker = new Map();
-      function rateLimit(funcName, maxCalls = 5, timeWindow = 60000) {
+      // Rate limiting for API calls
+      let lastCallTime = 0;
+      const RATE_LIMIT_MS = 2000; // 2 seconds between calls
+      
+      function canMakeCall() {
         const now = Date.now();
-        const calls = callTracker.get(funcName) || [];
-
-        // Remove old calls outside the time window
-        const recentCalls = calls.filter((call) => now - call < timeWindow);
-
-        if (recentCalls.length >= maxCalls) {
-          console.warn(`Rate limit exceeded for ${funcName}`);
+        if (now - lastCallTime < RATE_LIMIT_MS) {
           return false;
         }
-
-        recentCalls.push(now);
-        callTracker.set(funcName, recentCalls);
+        lastCallTime = now;
         return true;
       }
 
-      // Enterprise Security: Advanced logging and monitoring
-      function secureLog(level, message, data = {}) {
-        const sanitizedData = Object.keys(data).reduce((acc, key) => {
-          acc[key] = typeof data[key] === "string" ? "[REDACTED]" : data[key];
-          return acc;
-        }, {});
-
-        // Add security context to all logs
-        const securityContext = {
-          timestamp: new Date().toISOString(),
-          sessionId: generateSecureId(),
-          userAgent: navigator.userAgent.substring(0, 100),
-          url: window.location.href,
-          referrer: document.referrer || "none",
-          ...sanitizedData,
-        };
-
-        console[level](`[ENTERPRISE_SECURITY] ${message}`, securityContext);
-
-        // Store security events for monitoring (in production, this would be sent to a security service)
-        storeSecurityEvent(level, message, securityContext);
-      }
-
-      // Security: Generate secure session IDs
-      function generateSecureId() {
-        return (
-          "sec_" +
-          Date.now().toString(36) +
-          "_" +
-          Math.random().toString(36).substr(2, 9)
-        );
-      }
-
-      // Security: Store security events (in production, send to security monitoring service)
-      const securityEvents = [];
-      function storeSecurityEvent(level, message, context) {
-        securityEvents.push({
-          level,
-          message,
-          context,
-          timestamp: new Date().toISOString(),
-        });
-
-        // Limit stored events to prevent memory issues
-        if (securityEvents.length > 50) {
-          securityEvents.shift();
-        }
-
-        // In production, you would send this to a security monitoring service
-        // console.log('Security Event Stored:', securityEvents.length, 'events');
-      }
-
-      // Initialize Supabase with security checks
-      (function() {
-        const supabaseUrl = "https://jhpjpenbtazudqfrkogf.supabase.co";
-        const supabaseAnonKey =
-          "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpocGpwZW5idGF6dWRxZnJrb2dmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ3MjI4MzAsImV4cCI6MjA3MDI5ODgzMH0.pa_xmaWBACJ_8g-wML6z2DEEPa6tHJbXH6S5NndQt2E";
-
-        // Security validation
-        if (
-          !supabaseUrl.startsWith("https://") ||
-          !supabaseAnonKey.startsWith("eyJ")
-        ) {
-          showError("Security configuration error. Please contact support.");
-          return;
-        }
+      // Initialize Supabase
+      const supabaseUrl = "https://jhpjpenbtazudqfrkogf.supabase.co";
+      const supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpocGpwZW5idGF6dWRxZnJrb2dmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ3MjI4MzAsImV4cCI6MjA3MDI5ODgzMH0.pa_xmaWBACJ_8g-wML6z2DEEPa6tHJbXH6S5NndQt2E";
 
       let supabase;
       try {
         supabase = window.supabase.createClient(supabaseUrl, supabaseAnonKey);
+        log("info", "Supabase client initialized successfully");
       } catch (e) {
-        secureLog("error", "Failed to initialize Supabase client", {
-          error: e.message,
-        });
+        log("error", "Failed to initialize Supabase client", { error: e.message });
         showError("Failed to initialize verification service.");
         return;
       }
 
-      // Security: Validate and sanitize URL parameters
-      let urlParams, accessToken, refreshToken, type, error, code;
+      // Get URL parameters
+      const urlParams = new URLSearchParams(window.location.search);
+      const code = urlParams.get("code");
+      const accessToken = urlParams.get("access_token");
+      const refreshToken = urlParams.get("refresh_token");
+      const type = urlParams.get("type");
+      const error = urlParams.get("error");
 
-      try {
-        urlParams = new URLSearchParams(window.location.search);
-
-        // Handle both Supabase parameter formats
-        // Legacy format: access_token, refresh_token, type, error
-        // New format: code (for email verification)
-        code = sanitizeString(urlParams.get("code") || "");
-        accessToken = sanitizeString(urlParams.get("access_token") || "");
-        refreshToken = sanitizeString(urlParams.get("refresh_token") || "");
-        type = sanitizeString(urlParams.get("type") || "");
-        error = sanitizeString(urlParams.get("error") || "");
-
-        // More lenient validation - only check for obviously invalid formats
-        if (code && code.length < 6) {
-          secureLog("warn", "Code too short", { codeLength: code.length });
-          code = ""; // Clear invalid code but don't throw error
-        }
-        if (accessToken && accessToken.split(".").length !== 3) {
-          secureLog("warn", "Invalid access token format", { tokenLength: accessToken.length });
-          accessToken = ""; // Clear invalid token but don't throw error
-        }
-        if (refreshToken && refreshToken.split(".").length !== 3) {
-          secureLog("warn", "Invalid refresh token format", { tokenLength: refreshToken.length });
-          refreshToken = ""; // Clear invalid token but don't throw error
-        }
-      } catch (e) {
-        secureLog("error", "URL parameter parsing failed", {
-          error: e.message,
-        });
-        // Don't show error immediately - let the verification process handle it
-        code = "";
-        accessToken = "";
-        refreshToken = "";
-        type = "";
-        error = "";
-      }
-
-      // Log sanitized verification parameters (no sensitive data)
-      secureLog("info", "Verification attempt", {
+      log("info", "URL parameters parsed", {
         hasCode: !!code,
         hasAccessToken: !!accessToken,
         hasRefreshToken: !!refreshToken,
         type: type,
-        hasError: !!error,
-        codeLength: code ? code.length : 0,
-        urlSearch: window.location.search.substring(0, 100), // First 100 chars of URL params
+        hasError: !!error
       });
 
       async function handleVerification() {
-        // Security: Rate limit verification attempts
-        if (!rateLimit("handleVerification", 5, 300000)) {
-          // 5 attempts per 5 minutes (increased from 3)
-          showError(
-            "Too many verification attempts. Please wait before trying again."
-          );
+        if (!canMakeCall()) {
+          log("warn", "Rate limit exceeded");
           return;
         }
 
         try {
           // Check for errors first
           if (error) {
-            secureLog("info", "Verification failed with error", {
-              errorType: "url_error",
-            });
+            log("warn", "Verification failed with error", { error });
             showError(`Verification failed: ${sanitizeString(error)}`);
             return;
           }
 
-          // Handle different verification scenarios with improved logic
+          // Handle different verification scenarios
           if (code) {
-            // Supabase email verification using code
-            secureLog("info", "Processing code-based email verification", {
-              codeLength: code.length,
-              codePrefix: code.substring(0, 8) + "...",
-            });
-
+            log("info", "Processing code-based email verification");
+            
             try {
-              // Method 1: Try exchangeCodeForSession first (recommended by Supabase)
-              const { data: sessionData, error: exchangeError } =
-                await supabase.auth.exchangeCodeForSession(code);
+              // Try exchangeCodeForSession first (recommended by Supabase)
+              const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
 
               if (exchangeError) {
-                secureLog("warn", "exchangeCodeForSession failed, trying fallback", {
-                  errorCode: exchangeError.message,
-                });
+                log("warn", "exchangeCodeForSession failed, trying verifyOtp", { error: exchangeError.message });
                 
-                // Method 2: Try verifyOtp as fallback
-                try {
-                  const { data, error: verifyError } =
-                    await supabase.auth.verifyOtp({
-                      token: code,
-                      type: "email",
-                    });
+                // Fallback to verifyOtp
+                const { data, error: verifyError } = await supabase.auth.verifyOtp({
+                  token: code,
+                  type: "email",
+                });
 
-                  if (verifyError) {
-                    secureLog("warn", "verifyOtp also failed, trying manual session check", {
-                      verifyError: verifyError.message,
-                    });
-                    
-                    // Method 3: Check if user is already verified (common case)
-                    const { data: { user }, error: userError } = await supabase.auth.getUser();
-                    if (!userError && user && user.email_confirmed_at) {
-                      secureLog("info", "User already verified via session check");
-                      showSuccess();
-                      setTimeout(() => tryOpenApp(), 2000);
-                      return;
-                    }
-                    
-                    // If all methods fail, show helpful error
-                    showError("Failed to verify your email. The verification code may be expired or invalid. Please try logging into the app - your email might already be verified.");
-                    return;
-                  }
-
-                  secureLog("info", "Email verification successful via verifyOtp fallback");
-                  showSuccess();
-                  setTimeout(() => tryOpenApp(), 2000);
-                } catch (verifyException) {
-                  secureLog("error", "verifyOtp fallback exception", {
-                    error: verifyException.message,
-                  });
-                  showError("Failed to verify your email. Please try logging into the app - your email might already be verified.");
+                if (verifyError) {
+                  log("error", "verifyOtp also failed", { error: verifyError.message });
+                  showError("Failed to verify your email. The verification code may be expired or invalid. Please try logging into the app - your email might already be verified.");
+                  return;
                 }
+
+                log("info", "Email verification successful via verifyOtp");
+                showSuccess();
+                setTimeout(() => tryOpenApp(), 2000);
               } else {
-                // exchangeCodeForSession succeeded
-                secureLog("info", "Email verification successful via exchangeCodeForSession");
+                log("info", "Email verification successful via exchangeCodeForSession");
                 showSuccess();
                 setTimeout(() => tryOpenApp(), 2000);
               }
             } catch (e) {
-              secureLog("error", "Verification process error", {
-                error: e.message,
-                errorType: e.name,
-              });
+              log("error", "Verification process error", { error: e.message });
               showError("An error occurred during verification. Please try logging into the app - your email might already be verified.");
             }
           } else if (accessToken && refreshToken) {
-            secureLog("info", "Processing token-based verification");
+            log("info", "Processing token-based verification");
 
             try {
-              const { data, error: sessionError } =
-                await supabase.auth.setSession({
-                  access_token: accessToken,
-                  refresh_token: refreshToken,
-                });
+              const { data, error: sessionError } = await supabase.auth.setSession({
+                access_token: accessToken,
+                refresh_token: refreshToken,
+              });
 
               if (sessionError) {
-                secureLog("error", "Session setup failed", {
-                  errorCode: sessionError.message,
-                });
+                log("error", "Session setup failed", { error: sessionError.message });
                 showError("Failed to verify your account. Please try logging into the app.");
                 return;
               }
 
-              secureLog("info", "Session established successfully");
+              log("info", "Session established successfully");
               showSuccess();
             } catch (e) {
-              secureLog("error", "Token verification error", {
-                error: e.message,
-              });
+              log("error", "Token verification error", { error: e.message });
               showError("Failed to verify your account. Please try logging into the app.");
             }
           } else if (type === "signup") {
-            // Email confirmed but no tokens in URL (normal flow)
-            secureLog("info", "Processing signup confirmation");
+            log("info", "Processing signup confirmation");
             showSuccess();
           } else {
-            // Handle cases where parameters exist but are not recognized
+            // Handle cases with unrecognized parameters or direct access
             const hasAnyParams = window.location.search.length > 1;
             
             if (hasAnyParams) {
-              // User has parameters but they're not in expected format
-              secureLog("warn", "Unrecognized verification parameters", {
-                type,
-                hasTokens: !!(accessToken && refreshToken),
-                hasCode: !!code,
-                urlSearch: window.location.search.substring(0, 50),
-              });
-              
-              // Try to check if user is already verified
-              try {
-                const { data: { user }, error: userError } = await supabase.auth.getUser();
-                if (!userError && user && user.email_confirmed_at) {
-                  secureLog("info", "User already verified despite unrecognized parameters");
-                  showSuccess();
-                  return;
-                }
-              } catch (e) {
-                secureLog("warn", "Could not check user verification status", {
-                  error: e.message,
-                });
-              }
-              
+              log("warn", "Unrecognized verification parameters");
               showError("Invalid verification link format. Please try logging into the app - your email might already be verified.");
             } else {
-              // No parameters at all - direct access
-              secureLog("info", "Direct page access without parameters");
+              log("info", "Direct page access without parameters");
               showDirectAccess();
             }
           }
         } catch (err) {
-          secureLog("error", "Unexpected verification error", {
-            errorType: err.name,
-          });
+          log("error", "Unexpected verification error", { error: err.message });
           showError("An unexpected error occurred during verification. Please try logging into the app.");
         }
       }
 
       function tryOpenApp() {
-        // Security: Rate limit app opening attempts
-        if (!rateLimit("tryOpenApp", 2, 10000)) {
-          // 2 attempts per 10 seconds
-          secureLog("info", "App opening rate limited");
+        if (!canMakeCall()) {
+          log("warn", "App opening rate limited");
           return;
         }
 
         const appUrl = "io.supabase.hanapbuhay://";
+        log("info", "Attempting to open mobile app");
 
-        // Security: Validate app URL format
-        if (!appUrl.startsWith("io.supabase.hanapbuhay://")) {
-          secureLog("error", "Invalid app URL format");
-          return;
-        }
-
-        secureLog("info", "Attempting to open mobile app");
-
-        // Clear any existing timers to prevent multiple redirects
+        // Clear any existing timers
         if (window.appOpenTimer) {
           clearTimeout(window.appOpenTimer);
         }
 
-        // Try multiple methods to open the app with security checks
+        // Try to open the app
         try {
-          // Method 1: Direct location change (most reliable for mobile)
           window.location.href = appUrl;
         } catch (e) {
-          secureLog("warn", "Direct location change failed", {
-            error: e.message,
-          });
+          log("warn", "Direct location change failed", { error: e.message });
         }
 
-        // Method 2: Hidden iframe approach (works on some mobile browsers)
+        // Fallback: Try iframe method
         setTimeout(() => {
           try {
             const iframe = document.createElement("iframe");
@@ -651,159 +459,170 @@
             iframe.src = appUrl;
             document.body.appendChild(iframe);
 
-            // Clean up after a delay
             setTimeout(() => {
               if (iframe.parentNode) {
                 iframe.parentNode.removeChild(iframe);
               }
             }, 2000);
           } catch (e) {
-            secureLog("warn", "Iframe method failed", { error: e.message });
+            log("warn", "Iframe method failed", { error: e.message });
           }
         }, 500);
-
-        // Method 3: New tab/window as last resort (desktop browsers)
-        window.appOpenTimer = setTimeout(() => {
-          try {
-            const newTab = window.open(appUrl, "_blank", "noopener,noreferrer");
-            if (newTab) {
-              newTab.focus();
-              // Close the tab after a delay if it didn't redirect to the app
-              setTimeout(() => {
-                try {
-                  newTab.close();
-                } catch (e) {
-                  // Tab may have already navigated or been closed
-                }
-              }, 3000);
-            }
-          } catch (e) {
-            secureLog("warn", "New tab method failed", { error: e.message });
-          }
-        }, 1000);
       }
 
       function showSuccess() {
-        // Security: Clear sensitive data from memory
-        accessToken = null;
-        refreshToken = null;
-
         document.getElementById("loadingState").style.display = "none";
         document.getElementById("successState").style.display = "block";
         document.getElementById("errorState").style.display = "none";
         document.getElementById("pageTitle").textContent = "✅ Email Verified!";
 
-        // Update app link with security validation
+        // Update app link
         const appLink = document.getElementById("appLink");
         if (appLink) {
           appLink.href = "io.supabase.hanapbuhay://";
-          // Security: Add click tracking for analytics (without sensitive data)
           appLink.addEventListener("click", () => {
-            secureLog("info", "User clicked app link manually");
+            log("info", "User clicked app link manually");
           });
         }
 
-        secureLog("info", "Verification success displayed to user");
+        log("info", "Verification success displayed to user");
       }
 
-      function showDirectAccess() {
-        // Enterprise Security: Maximum protection for unauthorized access
-        // Based on OWASP guidelines and industry best practices
-
+      function showEmailNotVerified(email) {
         document.getElementById("loadingState").style.display = "none";
         document.getElementById("successState").style.display = "none";
         document.getElementById("errorState").style.display = "block";
-        document.getElementById("pageTitle").textContent =
-          "🚫 Access Denied - Security Protection Active";
+        document.getElementById("pageTitle").textContent = "📧 Email Verification Required";
 
         const errorElement = document.getElementById("errorMessage");
         if (errorElement) {
           errorElement.innerHTML = `
             <div style="text-align: center; max-width: 500px; margin: 0 auto;">
-              <!-- Security Shield Icon -->
-              <div style="font-size: 64px; margin-bottom: 20px; color: #d32f2f;">🛡️</div>
-
-              <!-- Security Alert Header -->
-              <h2 style="color: #d32f2f; margin-bottom: 15px; font-size: 24px;">Access Blocked</h2>
-              <p style="color: #666; margin-bottom: 25px; font-size: 16px;">
-                This protected page requires valid authentication credentials.
+              <div style="font-size: 64px; margin-bottom: 20px; color: #ff9800;">📧</div>
+              
+              <h2 style="color: #ff9800; margin-bottom: 15px; font-size: 24px;">Email Verification Required</h2>
+              <p style="color: #666; margin-bottom: 20px; font-size: 16px;">
+                Your account has been created, but your email address needs to be verified.
               </p>
-
-              <!-- Security Notice Box -->
-              <div style="background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%); border: 2px solid #e57373; border-radius: 12px; padding: 20px; margin: 25px 0; text-align: left;">
-                <div style="display: flex; align-items: center; margin-bottom: 15px;">
-                  <span style="font-size: 24px; margin-right: 10px;">⚠️</span>
-                  <strong style="color: #b71c1c; font-size: 18px;">Security Protection Active</strong>
-                </div>
-                <ul style="color: #b71c1c; margin: 0; padding-left: 20px; line-height: 1.6;">
-                  <li>This page is secured and requires proper authentication</li>
-                  <li>Unauthorized access attempts are monitored and logged</li>
-                  <li>Only authenticated email verification links are permitted</li>
-                  <li>Access is restricted to prevent security breaches</li>
-                </ul>
+              
+              <div style="background: #fff3e0; border: 1px solid #ffcc02; border-radius: 8px; padding: 15px; margin: 20px 0;">
+                <p style="margin: 0; color: #e65100; font-weight: 500;">
+                  📧 ${sanitizeString(email)}
+                </p>
               </div>
-
-              <!-- Instructions Box -->
-              <div style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 12px; padding: 20px; margin: 25px 0; text-align: left;">
-                <h3 style="color: #013237; margin-bottom: 15px; font-size: 18px;">🔐 How to Access This Page:</h3>
+              
+              <div style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 12px; padding: 20px; margin: 20px 0; text-align: left;">
+                <h3 style="color: #013237; margin-bottom: 15px; font-size: 18px;">📋 Next Steps:</h3>
                 <ol style="margin: 0; padding-left: 20px; color: #495057; line-height: 1.8;">
-                  <li style="margin-bottom: 10px;">Register for a Hanapbuhay account in the mobile app</li>
-                  <li style="margin-bottom: 10px;">Check your email for the official verification link</li>
-                  <li style="margin-bottom: 10px;">Click the secure verification link from your email</li>
-                  <li>The link contains encrypted authentication tokens</li>
+                  <li style="margin-bottom: 10px;">Check your email inbox for a verification link</li>
+                  <li style="margin-bottom: 10px;">Check your spam/junk folder if you don't see it</li>
+                  <li style="margin-bottom: 10px;">Click the verification link in the email</li>
+                  <li style="margin-bottom: 10px;">If the link expired, click "Resend Verification Email" below</li>
                 </ol>
               </div>
 
-              <!-- Action Buttons -->
+              <div style="margin-top: 20px;">
+                <button onclick="resendVerificationEmail('${sanitizeString(email)}')" class="app-link" style="margin-right: 15px; margin-bottom: 10px; border: none; cursor: pointer;">
+                  📤 Resend Verification Email
+                </button>
+                <br>
+                <a href="io.supabase.hanapbuhay://" class="app-link" style="margin-right: 15px; margin-bottom: 10px;">
+                  📱 Open Hanapbuhay App
+                </a>
+                <br>
+                <a href="#" onclick="window.close()" style="color: #6c757d; text-decoration: underline; font-size: 14px; margin-top: 10px; display: inline-block;">
+                  Close This Page
+                </a>
+              </div>
+            </div>
+          `;
+        }
+
+        log("info", "Email not verified screen displayed");
+      }
+
+      async function resendVerificationEmail(email) {
+        if (!canMakeCall()) {
+          alert("Too many resend attempts. Please wait before trying again.");
+          return;
+        }
+
+        try {
+          log("info", "Attempting to resend verification email");
+
+          const { error } = await supabase.auth.resend({
+            type: 'signup',
+            email: email,
+            emailRedirectTo: 'https://twinkolites.github.io/hanapbuhay/',
+          });
+
+          if (error) {
+            log("error", "Failed to resend verification email", { error: error.message });
+            alert("Failed to resend verification email: " + error.message);
+          } else {
+            log("info", "Verification email resent successfully");
+            alert("Verification email sent! Please check your inbox.");
+          }
+        } catch (e) {
+          log("error", "Exception while resending verification email", { error: e.message });
+          alert("An error occurred while resending the verification email.");
+        }
+      }
+
+      function showDirectAccess() {
+        document.getElementById("loadingState").style.display = "none";
+        document.getElementById("successState").style.display = "none";
+        document.getElementById("errorState").style.display = "block";
+        document.getElementById("pageTitle").textContent = "🔐 Email Verification Required";
+
+        const errorElement = document.getElementById("errorMessage");
+        if (errorElement) {
+          errorElement.innerHTML = `
+            <div style="text-align: center; max-width: 500px; margin: 0 auto;">
+              <div style="font-size: 64px; margin-bottom: 20px; color: #4ca771;">📧</div>
+              
+              <h2 style="color: #4ca771; margin-bottom: 15px; font-size: 24px;">Welcome to Hanapbuhay</h2>
+              <p style="color: #666; margin-bottom: 25px; font-size: 16px;">
+                This page is for email verification. You can only access it through a verification link sent to your email.
+              </p>
+
+              <div style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 12px; padding: 20px; margin: 25px 0; text-align: left;">
+                <h3 style="color: #013237; margin-bottom: 15px; font-size: 18px;">📋 How to verify your email:</h3>
+                <ol style="margin: 0; padding-left: 20px; color: #495057; line-height: 1.8;">
+                  <li style="margin-bottom: 10px;">Register for a Hanapbuhay account in the mobile app</li>
+                  <li style="margin-bottom: 10px;">Check your email for the verification link</li>
+                  <li style="margin-bottom: 10px;">Click the verification link from your email</li>
+                  <li>Your account will be verified automatically</li>
+                </ol>
+              </div>
+
               <div style="margin-top: 30px;">
                 <a href="io.supabase.hanapbuhay://" class="app-link" style="margin-right: 15px; margin-bottom: 10px;">
                   📱 Open Hanapbuhay App
                 </a>
                 <br>
                 <a href="#" onclick="window.history.back()" style="color: #6c757d; text-decoration: underline; font-size: 14px; margin-top: 10px; display: inline-block;">
-                  ← Go Back to Previous Page
+                  ← Go Back
                 </a>
-              </div>
-
-              <!-- Footer Security Note -->
-              <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #dee2e6; font-size: 12px; color: #6c757d;">
-                <p><strong>Security Notice:</strong> This page is protected by enterprise-grade security measures. All access attempts are logged for security auditing purposes.</p>
               </div>
             </div>
           `;
         }
 
-        // Hide default error button since we have custom actions
+        // Hide default error button
         const errorState = document.getElementById("errorState");
         if (errorState) {
-          const buttonContainer = errorState.querySelector(
-            '[style*="text-align: center"]'
-          );
+          const buttonContainer = errorState.querySelector('[style*="text-align: center"]');
           if (buttonContainer) {
             buttonContainer.style.display = "none";
           }
         }
 
-        // Enterprise Security Logging
-        secureLog("security", "Unauthorized access attempt blocked", {
-          accessType: "direct_access",
-          userAgent: navigator.userAgent.substring(0, 150),
-          referrer: document.referrer || "direct_access",
-          timestamp: new Date().toISOString(),
-          ipAddress: "client_side_logging",
-          securityLevel: "maximum",
-          threatLevel: "low",
-          action: "access_denied",
-        });
+        log("info", "Direct access screen displayed");
       }
 
       function showError(message) {
-        // Security: Sanitize error message before display
-        const sanitizedMessage = sanitizeString(message).substring(0, 200);
-
-        // Security: Clear sensitive data on error
-        accessToken = null;
-        refreshToken = null;
+        const sanitizedMessage = sanitizeString(message);
 
         document.getElementById("loadingState").style.display = "none";
         document.getElementById("successState").style.display = "none";
@@ -845,43 +664,25 @@
           `;
         }
 
-        secureLog("warn", "Verification error displayed to user", {
-          errorLength: sanitizedMessage.length,
-        });
+        log("warn", "Verification error displayed to user");
       }
 
-      // Security: Cleanup sensitive data on page unload
+      // Cleanup on page unload
       window.addEventListener("beforeunload", () => {
-        accessToken = null;
-        refreshToken = null;
         if (window.appOpenTimer) {
           clearTimeout(window.appOpenTimer);
         }
       });
 
-      // Security: Prevent context menu and right-click (optional, for additional security)
-      document.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        return false;
-      });
-
-      // Security: Prevent drag operations
-      document.addEventListener("dragstart", (e) => {
-        e.preventDefault();
-        return false;
-      });
-
-        // Check if this is direct access (no URL parameters)
-        const hasAnyParams = window.location.search.length > 1;
-        if (!hasAnyParams) {
-          // Direct access - show helpful message immediately
-          secureLog("info", "Direct page access detected - showing help message");
-          showDirectAccess();
-        } else {
-          // Has parameters - start verification process
-          handleVerification();
-        }
-      })();
+      // Start verification process
+      const hasAnyParams = window.location.search.length > 1;
+      if (!hasAnyParams) {
+        log("info", "Direct page access detected");
+        showDirectAccess();
+      } else {
+        log("info", "Starting verification process");
+        handleVerification();
+      }
     </script>
   </body>
 </html>
