@@ -590,20 +590,31 @@
         }
 
         try {
-          log("info", "Attempting to resend verification email");
+          log("info", "Attempting to resend email confirmation using resend endpoint");
 
-          const { error } = await supabase.auth.resend({
-            type: 'signup',
-            email: email,
-            emailRedirectTo: 'https://twinkolites.github.io/hanapbuhay/',
+          // Use the correct Supabase resend endpoint for email confirmation
+          // This is the proper way according to Supabase documentation (2024)
+          const response = await fetch(`${supabaseUrl}/auth/v1/resend`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': supabaseAnonKey,
+            },
+            body: JSON.stringify({
+              email: email,
+              type: 'signup',  // This sends email confirmation, not password reset
+            }),
           });
 
-          if (error) {
-            log("error", "Failed to resend verification email", { error: error.message });
-            alert("Failed to resend verification email: " + error.message);
-          } else {
+          if (response.ok) {
             log("info", "Verification email resent successfully");
-            alert("Verification email sent! Please check your inbox.");
+            alert("Verification email sent! Please check your inbox and spam folder.");
+          } else {
+            const errorData = await response.json();
+            log("error", "Failed to resend verification email", { 
+              error: errorData.error_description || errorData.msg || 'Unknown error' 
+            });
+            alert(`Failed to resend verification email: ${errorData.error_description || errorData.msg || 'Unknown error'}`);
           }
         } catch (e) {
           log("error", "Exception while resending verification email", { error: e.message });

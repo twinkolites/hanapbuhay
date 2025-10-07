@@ -45,6 +45,8 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
 
   int _currentStep = 0;
   bool _isLoading = false;
+  bool _isEmailVerified = false;
+  String? _verificationEmail;
 
   // Color palette
   static const Color mediumSeaGreen = Color(0xFF4CA771);
@@ -99,6 +101,11 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
     );
     
     _animationController.forward();
+    
+    // Check email verification status on app resume
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkEmailVerification();
+    });
   }
 
   @override
@@ -110,10 +117,153 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
   void _updateRegistrationData(EmployerRegistrationData newData) {
     setState(() {
       _registrationData = newData;
+      // If email changed, reset verification status
+      if (_verificationEmail != newData.email) {
+        _isEmailVerified = false;
+        _verificationEmail = newData.email;
+      }
     });
   }
 
+  Future<void> _verifyEmail() async {
+    if (_registrationData.email.isEmpty) {
+      SafeSnackBar.showError(
+        context,
+        message: 'Please enter your email address first.',
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      // Send email confirmation using signUp (creates account or resends confirmation)
+      final supabase = Supabase.instance.client;
+      await supabase.auth.signUp(
+        email: _registrationData.email,
+        password: 'temp_${DateTime.now().millisecondsSinceEpoch}', // Temporary password
+        data: {'email_verification_only': true},
+        emailRedirectTo: 'https://twinkolites.github.io/hanapbuhay/',
+      );
+
+      // Email sent successfully (even if user exists, confirmation email is sent)
+      _showEmailVerificationDialog();
+      setState(() => _isLoading = false);
+    } catch (e) {
+      // If user already exists, that's fine - confirmation email still sends
+      if (e.toString().contains('already registered') || 
+          e.toString().contains('User already registered')) {
+        _showEmailVerificationDialog();
+        setState(() => _isLoading = false);
+      } else {
+        SafeSnackBar.showError(
+          context,
+          message: 'Error sending verification email. Please try again.',
+        );
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  void _showEmailVerificationDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.email, color: Colors.blue),
+              const SizedBox(width: 8),
+              const Text('Verify Your Email'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('We\'ve sent a verification link to:'),
+              const SizedBox(height: 8),
+              Text(
+                _registrationData.email,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.blue,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Please check your email and click the verification link to continue with your registration.',
+                style: TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.warning, color: Colors.orange, size: 20),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'You cannot proceed without email verification.',
+                        style: TextStyle(fontSize: 12, color: Colors.orange),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: const Text('OK'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _verifyEmail();
+              },
+              child: const Text('Resend Email'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _checkEmailVerification() async {
+    // Check if user is authenticated and email is confirmed
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user != null && user.emailConfirmedAt != null && !_isEmailVerified) {
+      setState(() {
+        _isEmailVerified = true;
+        _verificationEmail = user.email;
+      });
+      
+      if (mounted) {
+        SafeSnackBar.showSuccess(
+          context,
+          message: 'Email verified successfully! You can now proceed.',
+        );
+      }
+    }
+  }
+
   void _nextStep() {
+    // Check if email verification is required when moving from step 0 (personal info)
+    if (_currentStep == 0 && !_isEmailVerified) {
+      _verifyEmail();
+      return;
+    }
+
     if (_currentStep < _steps.length - 1) {
       // Add a small delay to prevent animation conflicts
       Future.delayed(const Duration(milliseconds: 100), () {
@@ -140,6 +290,15 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
   }
 
   Future<void> _submitRegistration() async {
+    // Ensure email is verified before submission
+    if (!_isEmailVerified) {
+      SafeSnackBar.showError(
+        context,
+        message: 'Please verify your email address before submitting.',
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
 
     try {
@@ -231,48 +390,102 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
   Widget _buildStepIndicator() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      child: Row(
-        children: _steps.asMap().entries.map((entry) {
-          final index = entry.key;
-          final step = entry.value;
-          final isActive = index == _currentStep;
-          final isCompleted = index < _currentStep;
-
-          return Expanded(
-            child: Row(
-              children: [
-                Container(
-                  width: 32,
-                  height: 32,
-                  decoration: BoxDecoration(
-                    color: isActive || isCompleted
-                        ? mediumSeaGreen
-                        : Colors.grey.withValues(alpha: 0.3),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    isCompleted ? Icons.check : step['icon'],
-                    color: Colors.white,
-                    size: 16,
-                  ),
+      child: Column(
+        children: [
+          // Email verification status
+          if (_registrationData.email.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: _isEmailVerified 
+                    ? Colors.green.withOpacity(0.1)
+                    : Colors.orange.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: _isEmailVerified 
+                      ? Colors.green.withOpacity(0.3)
+                      : Colors.orange.withOpacity(0.3),
                 ),
-                if (index < _steps.length - 1)
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    _isEmailVerified ? Icons.verified : Icons.warning,
+                    color: _isEmailVerified ? Colors.green : Colors.orange,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
                   Expanded(
-                    child: Container(
-                      height: 2,
-                      margin: const EdgeInsets.symmetric(horizontal: 8),
-                      decoration: BoxDecoration(
-                        color: isCompleted
-                            ? mediumSeaGreen
-                            : Colors.grey.withValues(alpha: 0.3),
-                        borderRadius: BorderRadius.circular(1),
+                    child: Text(
+                      _isEmailVerified 
+                          ? 'Email verified: ${_registrationData.email}'
+                          : 'Email verification required: ${_registrationData.email}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: _isEmailVerified ? Colors.green : Colors.orange,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
                   ),
-              ],
+                  if (!_isEmailVerified)
+                    TextButton(
+                      onPressed: _verifyEmail,
+                      child: const Text('Verify', style: TextStyle(fontSize: 12)),
+                    ),
+                ],
+              ),
             ),
-          );
-        }).toList(),
+          // Step indicator
+          Row(
+            children: _steps.asMap().entries.map((entry) {
+              final index = entry.key;
+              final step = entry.value;
+              final isActive = index == _currentStep;
+              final isCompleted = index < _currentStep;
+              final canProceed = index == 0 ? _isEmailVerified : true;
+
+              return Expanded(
+                child: Row(
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: isActive || isCompleted
+                            ? mediumSeaGreen
+                            : canProceed
+                                ? Colors.grey.withValues(alpha: 0.3)
+                                : Colors.red.withValues(alpha: 0.3),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        isCompleted ? Icons.check : step['icon'],
+                        color: Colors.white,
+                        size: 16,
+                      ),
+                    ),
+                    if (index < _steps.length - 1)
+                      Expanded(
+                        child: Container(
+                          height: 2,
+                          margin: const EdgeInsets.symmetric(horizontal: 8),
+                          decoration: BoxDecoration(
+                            color: isCompleted
+                                ? mediumSeaGreen
+                                : canProceed
+                                    ? Colors.grey.withValues(alpha: 0.3)
+                                    : Colors.red.withValues(alpha: 0.3),
+                            borderRadius: BorderRadius.circular(1),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            }).toList(),
+          ),
+        ],
       ),
     );
   }
@@ -376,6 +589,13 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
 
   @override
   Widget build(BuildContext context) {
+    // Periodically check email verification status
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted && !_isEmailVerified) {
+        _checkEmailVerification();
+      }
+    });
+
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
