@@ -26,21 +26,58 @@ class NewUserDetectionService {
         return false;
       }
 
-      // Check database for user profile completeness
-      final profile = await _supabase
-          .from('applicant_profile')
-          .select('user_id, job_interests, preferred_industries, preferred_skills, created_at')
-          .eq('user_id', userId)
+      // First, check the user's role from the profiles table
+      final userProfile = await _supabase
+          .from('profiles')
+          .select('role, created_at')
+          .eq('id', userId)
           .maybeSingle();
 
-      // Check if user has any job preferences set
-      final hasPreferences = profile != null && 
-          ((profile['job_interests'] as List?)?.isNotEmpty == true ||
-           (profile['preferred_industries'] as List?)?.isNotEmpty == true ||
-           (profile['preferred_skills'] as List?)?.isNotEmpty == true);
+      if (userProfile == null) {
+        debugPrint('❌ User profile not found for $userId');
+        // If no profile found, consider them new
+        await prefs.setBool('${_newUserKey}_$userId', true);
+        return true;
+      }
+
+      final userRole = userProfile['role'] as String? ?? 'applicant';
+      debugPrint('🔍 User role: $userRole for $userId');
+
+      // Check database for user profile completeness based on role
+      Map<String, dynamic>? profile;
+      bool hasPreferences = false;
+      String? createdAt;
+
+      if (userRole == 'employer') {
+        // For employers, check if they have company info
+        final companyProfile = await _supabase
+            .from('companies')
+            .select('id, name, about, created_at')
+            .eq('owner_id', userId)
+            .maybeSingle();
+        
+        profile = companyProfile;
+        hasPreferences = profile != null && 
+            (profile['name'] != null && (profile['name'] as String).isNotEmpty) &&
+            (profile['about'] != null && (profile['about'] as String).isNotEmpty);
+        createdAt = profile?['created_at'];
+      } else {
+        // For applicants, check job preferences
+        final applicantProfile = await _supabase
+            .from('applicant_profile')
+            .select('user_id, job_interests, preferred_industries, preferred_skills, created_at')
+            .eq('user_id', userId)
+            .maybeSingle();
+        
+        profile = applicantProfile;
+        hasPreferences = profile != null && 
+            ((profile['job_interests'] as List?)?.isNotEmpty == true ||
+             (profile['preferred_industries'] as List?)?.isNotEmpty == true ||
+             (profile['preferred_skills'] as List?)?.isNotEmpty == true);
+        createdAt = profile?['created_at'];
+      }
 
       // Check if user has been active for more than 24 hours (not truly new)
-      final createdAt = profile?['created_at'];
       bool isRecentlyCreated = true;
       
       if (createdAt != null) {
@@ -163,17 +200,57 @@ class NewUserDetectionService {
       final completed = await hasCompletedOnboarding(userId);
       final completionTime = await getOnboardingCompletionTime(userId);
       
-      // Check preferences
-      final profile = await _supabase
-          .from('applicant_profile')
-          .select('job_interests, preferred_industries, preferred_skills')
-          .eq('user_id', userId)
+      // First, check the user's role from the profiles table
+      final userProfile = await _supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', userId)
           .maybeSingle();
 
-      final hasPreferences = profile != null && 
-          ((profile['job_interests'] as List?)?.isNotEmpty == true ||
-           (profile['preferred_industries'] as List?)?.isNotEmpty == true ||
-           (profile['preferred_skills'] as List?)?.isNotEmpty == true);
+      if (userProfile == null) {
+        debugPrint('❌ User profile not found for $userId in getOnboardingStatus');
+        return {
+          'isNewUser': true,
+          'hasCompletedOnboarding': false,
+          'hasJobPreferences': false,
+          'completionTime': null,
+          'shouldShowOnboarding': true,
+        };
+      }
+
+      final userRole = userProfile['role'] as String? ?? 'applicant';
+      debugPrint('🔍 User role in getOnboardingStatus: $userRole for $userId');
+      
+      // Check preferences based on role
+      Map<String, dynamic>? profile;
+      bool hasPreferences = false;
+
+      if (userRole == 'employer') {
+        // For employers, check if they have company info
+        final companyProfile = await _supabase
+            .from('companies')
+            .select('id, name, about')
+            .eq('owner_id', userId)
+            .maybeSingle();
+        
+        profile = companyProfile;
+        hasPreferences = profile != null && 
+            (profile['name'] != null && (profile['name'] as String).isNotEmpty) &&
+            (profile['about'] != null && (profile['about'] as String).isNotEmpty);
+      } else {
+        // For applicants, check job preferences
+        final applicantProfile = await _supabase
+            .from('applicant_profile')
+            .select('job_interests, preferred_industries, preferred_skills')
+            .eq('user_id', userId)
+            .maybeSingle();
+        
+        profile = applicantProfile;
+        hasPreferences = profile != null && 
+            ((profile['job_interests'] as List?)?.isNotEmpty == true ||
+             (profile['preferred_industries'] as List?)?.isNotEmpty == true ||
+             (profile['preferred_skills'] as List?)?.isNotEmpty == true);
+      }
 
       return {
         'isNewUser': isNew,
