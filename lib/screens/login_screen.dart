@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../providers/auth_provider.dart';
@@ -11,6 +12,7 @@ import 'employer/home_screen.dart';
 import 'admin/admin_dashboard_screen.dart';
 import 'employer/employer_registration_screen.dart';
 import 'employer/employer_application_status_screen.dart';
+import 'employer/email_verification_blocked_screen.dart';
 import '../services/input_security_service.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -433,6 +435,24 @@ class _LoginScreenState extends State<LoginScreen>
         return;
       }
       
+      // First check if email is verified
+      if (user.emailConfirmedAt == null) {
+        debugPrint('📧 Email not verified for user: ${user.email}');
+        // Navigate to email verification blocked screen
+        await Future.delayed(const Duration(milliseconds: 100));
+        if (!mounted) return;
+        
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => EmailVerificationBlockedScreen(email: user.email ?? ''),
+          ),
+        );
+        return;
+      }
+      
+      debugPrint('✅ Email verified for user: ${user.email}');
+      
       // Get user profile and verification status
       final profile = await supabase
           .from('profiles')
@@ -464,6 +484,7 @@ class _LoginScreenState extends State<LoginScreen>
         );
       }
     } catch (e) {
+      debugPrint('❌ Error in _checkUserRoleAndNavigate: $e');
       _showErrorDialog('Failed to check user role. Defaulting to applicant.');
       if (mounted) {
         Navigator.pushReplacement(

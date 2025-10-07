@@ -226,7 +226,10 @@
               use.
             </p>
             <p style="font-size: 14px; color: #666; margin-top: 10px;">
-              If you registered as an employer, your application is now under review by our admin team.
+              <strong>For Employers:</strong> Your application is now under review by our admin team. You can log in to check your application status.
+            </p>
+            <p style="font-size: 14px; color: #666; margin-top: 5px;">
+              <strong>For Job Seekers:</strong> You can now start exploring job opportunities and applying for positions.
             </p>
           </div>
           <div class="instructions show">
@@ -412,22 +415,29 @@
         type = sanitizeString(urlParams.get("type") || "");
         error = sanitizeString(urlParams.get("error") || "");
 
-        // Validate parameters
-        if (code && code.length < 10) {
-          throw new Error("Invalid verification code format");
+        // More lenient validation - only check for obviously invalid formats
+        if (code && code.length < 6) {
+          secureLog("warn", "Code too short", { codeLength: code.length });
+          code = ""; // Clear invalid code but don't throw error
         }
-        if (accessToken && !validateToken(accessToken)) {
-          throw new Error("Invalid access token format");
+        if (accessToken && accessToken.split(".").length !== 3) {
+          secureLog("warn", "Invalid access token format", { tokenLength: accessToken.length });
+          accessToken = ""; // Clear invalid token but don't throw error
         }
-        if (refreshToken && !validateToken(refreshToken)) {
-          throw new Error("Invalid refresh token format");
+        if (refreshToken && refreshToken.split(".").length !== 3) {
+          secureLog("warn", "Invalid refresh token format", { tokenLength: refreshToken.length });
+          refreshToken = ""; // Clear invalid token but don't throw error
         }
       } catch (e) {
-        secureLog("error", "URL parameter validation failed", {
+        secureLog("error", "URL parameter parsing failed", {
           error: e.message,
         });
-        showError("Invalid verification link parameters.");
-        return;
+        // Don't show error immediately - let the verification process handle it
+        code = "";
+        accessToken = "";
+        refreshToken = "";
+        type = "";
+        error = "";
       }
 
       // Log sanitized verification parameters (no sensitive data)
@@ -443,8 +453,8 @@
 
       async function handleVerification() {
         // Security: Rate limit verification attempts
-        if (!rateLimit("handleVerification", 3, 300000)) {
-          // 3 attempts per 5 minutes
+        if (!rateLimit("handleVerification", 5, 300000)) {
+          // 5 attempts per 5 minutes (increased from 3)
           showError(
             "Too many verification attempts. Please wait before trying again."
           );
@@ -452,13 +462,6 @@
         }
 
         try {
-          // Security: Additional validation before processing
-          if (error && error.length > 100) {
-            secureLog("warn", "Suspicious error parameter length");
-            showError("Invalid verification link.");
-            return;
-          }
-
           // Check for errors first
           if (error) {
             secureLog("info", "Verification failed with error", {
@@ -468,7 +471,7 @@
             return;
           }
 
-          // Handle different verification scenarios
+          // Handle different verification scenarios with improved logic
           if (code) {
             // Supabase email verification using code
             secureLog("info", "Processing code-based email verification", {
@@ -477,17 +480,16 @@
             });
 
             try {
-              // Use exchangeCodeForSession for email verification (recommended approach)
+              // Method 1: Try exchangeCodeForSession first (recommended by Supabase)
               const { data: sessionData, error: exchangeError } =
                 await supabase.auth.exchangeCodeForSession(code);
 
               if (exchangeError) {
-                secureLog("error", "exchangeCodeForSession failed", {
+                secureLog("warn", "exchangeCodeForSession failed, trying fallback", {
                   errorCode: exchangeError.message,
-                  errorName: exchangeError.name,
                 });
                 
-                // Try verifyOtp as fallback
+                // Method 2: Try verifyOtp as fallback
                 try {
                   const { data, error: verifyError } =
                     await supabase.auth.verifyOtp({
@@ -496,115 +498,115 @@
                     });
 
                   if (verifyError) {
-                    secureLog("error", "Both verification methods failed", {
-                      exchangeError: exchangeError.message,
-                      verifyOtpError: verifyError.message,
+                    secureLog("warn", "verifyOtp also failed, trying manual session check", {
+                      verifyError: verifyError.message,
                     });
-                    showError("Failed to verify your email. The verification code may be expired or invalid. Please request a new verification email.");
+                    
+                    // Method 3: Check if user is already verified (common case)
+                    const { data: { user }, error: userError } = await supabase.auth.getUser();
+                    if (!userError && user && user.email_confirmed_at) {
+                      secureLog("info", "User already verified via session check");
+                      showSuccess();
+                      setTimeout(() => tryOpenApp(), 2000);
+                      return;
+                    }
+                    
+                    // If all methods fail, show helpful error
+                    showError("Failed to verify your email. The verification code may be expired or invalid. Please try logging into the app - your email might already be verified.");
                     return;
                   }
 
                   secureLog("info", "Email verification successful via verifyOtp fallback");
                   showSuccess();
-
-                  // Try to open the app automatically after a short delay
-                  setTimeout(() => {
-                    tryOpenApp();
-                  }, 2000);
+                  setTimeout(() => tryOpenApp(), 2000);
                 } catch (verifyException) {
                   secureLog("error", "verifyOtp fallback exception", {
                     error: verifyException.message,
                   });
-                  showError("Failed to verify your email. Please request a new verification email.");
-                  return;
+                  showError("Failed to verify your email. Please try logging into the app - your email might already be verified.");
                 }
               } else {
                 // exchangeCodeForSession succeeded
                 secureLog("info", "Email verification successful via exchangeCodeForSession");
                 showSuccess();
-
-                // Try to open the app automatically after a short delay
-                setTimeout(() => {
-                  tryOpenApp();
-                }, 2000);
+                setTimeout(() => tryOpenApp(), 2000);
               }
             } catch (e) {
               secureLog("error", "Verification process error", {
                 error: e.message,
                 errorType: e.name,
-                stack: e.stack ? e.stack.substring(0, 200) : "no stack",
               });
-              showError("An error occurred during verification: " + e.message);
+              showError("An error occurred during verification. Please try logging into the app - your email might already be verified.");
             }
           } else if (accessToken && refreshToken) {
             secureLog("info", "Processing token-based verification");
 
-            // Additional security: Validate token expiration (rough check)
             try {
-              const tokenPayload = JSON.parse(atob(accessToken.split(".")[1]));
-              const now = Math.floor(Date.now() / 1000);
+              const { data, error: sessionError } =
+                await supabase.auth.setSession({
+                  access_token: accessToken,
+                  refresh_token: refreshToken,
+                });
 
-              if (tokenPayload.exp && tokenPayload.exp < now) {
-                secureLog("warn", "Token expired before verification");
-                showError(
-                  "Verification link has expired. Please request a new one."
-                );
+              if (sessionError) {
+                secureLog("error", "Session setup failed", {
+                  errorCode: sessionError.message,
+                });
+                showError("Failed to verify your account. Please try logging into the app.");
                 return;
               }
+
+              secureLog("info", "Session established successfully");
+              showSuccess();
             } catch (e) {
-              secureLog("warn", "Could not validate token expiration");
-              // Continue anyway, let Supabase handle it
-            }
-
-            const { data, error: sessionError } =
-              await supabase.auth.setSession({
-                access_token: accessToken,
-                refresh_token: refreshToken,
+              secureLog("error", "Token verification error", {
+                error: e.message,
               });
-
-            if (sessionError) {
-              secureLog("error", "Session setup failed", {
-                errorCode: sessionError.message,
-              });
-              showError("Failed to verify your account. Please try again.");
-              return;
+              showError("Failed to verify your account. Please try logging into the app.");
             }
-
-            secureLog("info", "Session established successfully");
-            showSuccess();
-
-            // Note: Don't auto-open app after verification
-            // User can manually click "Open Hanapbuhay App" button
-            // This prevents conflicts with the hybrid verification flow
           } else if (type === "signup") {
             // Email confirmed but no tokens in URL (normal flow)
             secureLog("info", "Processing signup confirmation");
             showSuccess();
-            // Note: Don't auto-open app - let user manually open via button
           } else {
-            // Handle direct access to the page (no URL parameters)
-            const hasAnyParams = window.location.search.length > 1; // More than just '?'
-
-            if (!hasAnyParams) {
-              // User visited the page directly without parameters
-              secureLog("info", "Direct page access without parameters");
-              showDirectAccess();
-            } else {
-              // User has parameters but they're invalid
-              secureLog("warn", "Invalid verification parameters", {
+            // Handle cases where parameters exist but are not recognized
+            const hasAnyParams = window.location.search.length > 1;
+            
+            if (hasAnyParams) {
+              // User has parameters but they're not in expected format
+              secureLog("warn", "Unrecognized verification parameters", {
                 type,
                 hasTokens: !!(accessToken && refreshToken),
+                hasCode: !!code,
+                urlSearch: window.location.search.substring(0, 50),
               });
-              showError(
-                "Invalid verification link. Please request a new verification email."
-              );
+              
+              // Try to check if user is already verified
+              try {
+                const { data: { user }, error: userError } = await supabase.auth.getUser();
+                if (!userError && user && user.email_confirmed_at) {
+                  secureLog("info", "User already verified despite unrecognized parameters");
+                  showSuccess();
+                  return;
+                }
+              } catch (e) {
+                secureLog("warn", "Could not check user verification status", {
+                  error: e.message,
+                });
+              }
+              
+              showError("Invalid verification link format. Please try logging into the app - your email might already be verified.");
+            } else {
+              // No parameters at all - direct access
+              secureLog("info", "Direct page access without parameters");
+              showDirectAccess();
             }
           }
         } catch (err) {
           secureLog("error", "Unexpected verification error", {
             errorType: err.name,
           });
-          showError("An unexpected error occurred during verification.");
+          showError("An unexpected error occurred during verification. Please try logging into the app.");
         }
       }
 
@@ -821,6 +823,8 @@
               <div style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 12px; padding: 20px; margin: 20px 0; text-align: left;">
                 <h3 style="color: #013237; margin-bottom: 15px; font-size: 18px;">🔧 Troubleshooting Steps:</h3>
                 <ol style="margin: 0; padding-left: 20px; color: #495057; line-height: 1.8;">
+                  <li style="margin-bottom: 10px;"><strong>Try logging into the app first</strong> - Your email might already be verified</li>
+                  <li style="margin-bottom: 10px;">Check your spam/junk folder for the verification email</li>
                   <li style="margin-bottom: 10px;">Make sure you clicked the verification link from your email</li>
                   <li style="margin-bottom: 10px;">Check if the link has expired (verification links expire after 24 hours)</li>
                   <li style="margin-bottom: 10px;">Try requesting a new verification email from the app</li>
