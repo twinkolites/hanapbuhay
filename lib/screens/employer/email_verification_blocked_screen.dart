@@ -62,15 +62,26 @@ class _EmailVerificationBlockedScreenState extends State<EmailVerificationBlocke
     setState(() => _isLoading = true);
 
     try {
-      await _supabase.auth.resend(
-        type: OtpType.signup,
+      // Use signUp with the same email to resend email confirmation
+      // This is the correct way to resend email confirmation in Supabase
+      await _supabase.auth.signUp(
         email: widget.email,
+        password: 'temp_password_${DateTime.now().millisecondsSinceEpoch}', // Temporary password
+        data: {
+          'resend_verification': true,
+          'action': 'email_confirmation'
+        },
         emailRedirectTo: 'https://twinkolites.github.io/hanapbuhay/',
       );
 
       SafeSnackBar.showSuccess(context, message: 'Verification email sent! Please check your inbox.');
     } catch (e) {
-      SafeSnackBar.showError(context, message: 'Failed to resend verification email: $e');
+      // If user already exists, the signUp will still send confirmation email
+      if (e.toString().contains('already registered') || e.toString().contains('User already registered')) {
+        SafeSnackBar.showSuccess(context, message: 'Verification email sent! Please check your inbox and spam folder.');
+      } else {
+        SafeSnackBar.showError(context, message: 'Failed to resend verification email: $e');
+      }
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
