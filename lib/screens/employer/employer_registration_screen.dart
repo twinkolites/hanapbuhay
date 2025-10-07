@@ -137,31 +137,50 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
     setState(() => _isLoading = true);
 
     try {
-      // Send email confirmation using signUp (creates account or resends confirmation)
+      // First, try to sign up the user to create an account
       final supabase = Supabase.instance.client;
-      await supabase.auth.signUp(
-        email: _registrationData.email,
-        password: 'temp_${DateTime.now().millisecondsSinceEpoch}', // Temporary password
-        data: {'email_verification_only': true},
-        emailRedirectTo: 'https://twinkolites.github.io/hanapbuhay/',
-      );
-
-      // Email sent successfully (even if user exists, confirmation email is sent)
-      _showEmailVerificationDialog();
-      setState(() => _isLoading = false);
-    } catch (e) {
-      // If user already exists, that's fine - confirmation email still sends
-      if (e.toString().contains('already registered') || 
-          e.toString().contains('User already registered')) {
+      
+      try {
+        await supabase.auth.signUp(
+          email: _registrationData.email,
+          password: _registrationData.password.isNotEmpty 
+              ? _registrationData.password 
+              : 'temp_${DateTime.now().millisecondsSinceEpoch}',
+          emailRedirectTo: 'https://twinkolites.github.io/hanapbuhay/',
+        );
+        
         _showEmailVerificationDialog();
         setState(() => _isLoading = false);
-      } else {
-        SafeSnackBar.showError(
-          context,
-          message: 'Error sending verification email. Please try again.',
-        );
-        setState(() => _isLoading = false);
+      } on AuthException catch (e) {
+        // If user already exists, use resend method
+        if (e.message.contains('already registered') || 
+            e.message.contains('User already registered')) {
+          
+          // Use the proper resend method for existing users
+          await supabase.auth.resend(
+            type: OtpType.signup,
+            email: _registrationData.email,
+            emailRedirectTo: 'https://twinkolites.github.io/hanapbuhay/',
+          );
+          
+          _showEmailVerificationDialog();
+          setState(() => _isLoading = false);
+        } else {
+          throw e; // Re-throw if it's a different error
+        }
       }
+    } on AuthException catch (e) {
+      SafeSnackBar.showError(
+        context,
+        message: 'Error sending verification email: ${e.message}',
+      );
+      setState(() => _isLoading = false);
+    } catch (e) {
+      SafeSnackBar.showError(
+        context,
+        message: 'Error sending verification email. Please try again.',
+      );
+      setState(() => _isLoading = false);
     }
   }
 

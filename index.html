@@ -329,16 +329,18 @@
       // Get URL parameters
       const urlParams = new URLSearchParams(window.location.search);
       const code = urlParams.get("code");
+      const token_hash = urlParams.get("token_hash");
+      const type = urlParams.get("type");
       const accessToken = urlParams.get("access_token");
       const refreshToken = urlParams.get("refresh_token");
-      const type = urlParams.get("type");
       const error = urlParams.get("error");
 
       log("info", "URL parameters parsed", {
         hasCode: !!code,
+        hasTokenHash: !!token_hash,
+        type: type,
         hasAccessToken: !!accessToken,
         hasRefreshToken: !!refreshToken,
-        type: type,
         hasError: !!error
       });
 
@@ -364,56 +366,70 @@
           }
 
           // Handle different verification scenarios
-          if (code) {
-            log("info", "Processing code-based email verification", { code: code.substring(0, 8) + "..." });
+          if (token_hash && type) {
+            // This is the new format from auth.resend() with OtpType.signup
+            log("info", "Processing token_hash-based email verification", { type: type });
             
             try {
-              // Try exchangeCodeForSession first (recommended by Supabase for PKCE flow)
+              // Supabase JS SDK automatically handles token_hash in the URL
+              // We just need to call getSession() which will exchange the token_hash
+              log("info", "Attempting to verify using token_hash");
+              const { data, error: sessionError } = await supabase.auth.getSession();
+
+              if (sessionError) {
+                log("error", "Failed to get session from token_hash", { error: sessionError.message });
+                showError("Failed to verify your email. The link may be expired. Please request a new verification email from the app.");
+                return;
+              }
+
+              if (data.session && data.session.user) {
+                log("info", "Email verification successful via token_hash", { 
+                  user: data.session.user.email,
+                  confirmed: data.session.user.email_confirmed_at 
+                });
+                showSuccess();
+                setTimeout(() => tryOpenApp(), 2000);
+              } else {
+                log("warn", "No session after token_hash verification");
+                showError("Verification incomplete. Please try logging into the app.");
+              }
+            } catch (e) {
+              log("error", "Token hash verification error", { error: e.message });
+              showError("An error occurred during verification. Please try logging into the app.");
+            }
+          } else if (code) {
+            // This is from signUp() - PKCE flow
+            log("info", "Processing code-based email verification (PKCE)", { code: code.substring(0, 8) + "..." });
+            
+            try {
+              // Try exchangeCodeForSession for PKCE flow
               log("info", "Attempting exchangeCodeForSession");
               const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
 
               if (exchangeError) {
-                log("warn", "exchangeCodeForSession failed, trying verifyOtp", { error: exchangeError.message });
+                log("error", "exchangeCodeForSession failed", { error: exchangeError.message });
                 
-                // Fallback to verifyOtp for email verification
-                log("info", "Attempting verifyOtp");
-                const { data, error: verifyError } = await supabase.auth.verifyOtp({
-                  token: code,
-                  type: "email",
-                });
-
-                if (verifyError) {
-                  log("error", "Both verification methods failed", { 
-                    exchangeError: exchangeError.message,
-                    verifyError: verifyError.message 
-                  });
-                  
-                  // Check if user is already verified by trying to get current session
-                  const { data: { user } } = await supabase.auth.getUser();
-                  if (user && user.email_confirmed_at) {
-                    log("info", "User is already verified");
-                    showSuccess();
-                    setTimeout(() => tryOpenApp(), 2000);
-                    return;
-                  }
-                  
-                  showError("Failed to verify your email. The verification code may be expired or invalid. Please try logging into the app - your email might already be verified.");
+                // Check if user is already verified
+                const { data: { user } } = await supabase.auth.getUser();
+                if (user && user.email_confirmed_at) {
+                  log("info", "User is already verified");
+                  showSuccess();
+                  setTimeout(() => tryOpenApp(), 2000);
                   return;
                 }
-
-                log("info", "Email verification successful via verifyOtp");
-                showSuccess();
-                setTimeout(() => tryOpenApp(), 2000);
-              } else {
-                log("info", "Email verification successful via exchangeCodeForSession", { 
-                  user: data.user?.email,
-                  session: !!data.session 
-                });
-                showSuccess();
-                setTimeout(() => tryOpenApp(), 2000);
+                
+                showError("Failed to verify your email. The verification code may be expired or invalid. Please try logging into the app - your email might already be verified.");
+                return;
               }
+
+              log("info", "Email verification successful via PKCE", { 
+                user: data.user?.email,
+                session: !!data.session 
+              });
+              showSuccess();
+              setTimeout(() => tryOpenApp(), 2000);
             } catch (e) {
-              log("error", "Verification process error", { error: e.message });
+              log("error", "PKCE verification error", { error: e.message });
               
               // Check if user is already verified
               try {
@@ -589,32 +605,30 @@
           return;
         }
 
-        try {
-          log("info", "Attempting to resend email confirmation using resend endpoint");
+        if (!supabase) {
+          alert("Verification service not available. Please try again later.");
+          return;
+        }
 
-          // Use the correct Supabase resend endpoint for email confirmation
-          // This is the proper way according to Supabase documentation (2024)
-          const response = await fetch(`${supabaseUrl}/auth/v1/resend`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'apikey': supabaseAnonKey,
-            },
-            body: JSON.stringify({
-              email: email,
-              type: 'signup',  // This sends email confirmation, not password reset
-            }),
+        try {
+          log("info", "Attempting to resend email confirmation using Supabase SDK");
+
+          // Use the Supabase SDK resend method (same as Flutter implementation)
+          // This is the proper way according to Supabase documentation (2024/2025)
+          const { error } = await supabase.auth.resend({
+            type: 'signup',
+            email: email,
+            options: {
+              emailRedirectTo: 'https://twinkolites.github.io/hanapbuhay/'
+            }
           });
 
-          if (response.ok) {
+          if (error) {
+            log("error", "Failed to resend verification email", { error: error.message });
+            alert(`Failed to resend verification email: ${error.message}`);
+          } else {
             log("info", "Verification email resent successfully");
             alert("Verification email sent! Please check your inbox and spam folder.");
-          } else {
-            const errorData = await response.json();
-            log("error", "Failed to resend verification email", { 
-              error: errorData.error_description || errorData.msg || 'Unknown error' 
-            });
-            alert(`Failed to resend verification email: ${errorData.error_description || errorData.msg || 'Unknown error'}`);
           }
         } catch (e) {
           log("error", "Exception while resending verification email", { error: e.message });

@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
 import '../../utils/safe_snackbar.dart';
 import '../login_screen.dart';
 
@@ -64,39 +62,32 @@ class _EmailVerificationBlockedScreenState extends State<EmailVerificationBlocke
     setState(() => _isLoading = true);
 
     try {
-      // Use the correct Supabase resend endpoint for email confirmation
-      // This is the proper way according to Supabase documentation
-      const supabaseUrl = 'https://jhpjpenbtazudqfrkogf.supabase.co';
-      const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpocGpwZW5idGF6dWRxZnJrb2dmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ3MjI4MzAsImV4cCI6MjA3MDI5ODgzMH0.pa_xmaWBACJ_8g-wML6z2DEEPa6tHJbXH6S5NndQt2E';
-      
-      final url = Uri.parse('$supabaseUrl/auth/v1/resend');
-      
-      final response = await http.post(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': supabaseAnonKey,
-        },
-        body: jsonEncode({
-          'email': widget.email,
-          'type': 'signup',  // This sends email confirmation, not password reset
-        }),
+      // Use the correct Supabase auth.resend() method with OtpType.signup
+      // This is the proper way according to Supabase Flutter documentation (2024/2025)
+      await _supabase.auth.resend(
+        type: OtpType.signup,
+        email: widget.email,
+        emailRedirectTo: 'https://twinkolites.github.io/hanapbuhay/',
       );
 
-      if (response.statusCode == 200) {
-        SafeSnackBar.showSuccess(
-          context, 
-          message: 'Verification email sent! Please check your inbox and spam folder.'
-        );
-      } else {
-        final errorBody = jsonDecode(response.body);
-        SafeSnackBar.showError(
-          context, 
-          message: 'Failed to resend verification email: ${errorBody['error_description'] ?? errorBody['msg'] ?? 'Unknown error'}'
-        );
-      }
+      // The resend method in newer Supabase SDK doesn't return errors in the traditional way
+      // If no exception is thrown, it succeeded
+      SafeSnackBar.showSuccess(
+        context, 
+        message: 'Verification email sent! Please check your inbox and spam folder.'
+      );
+    } on AuthException catch (e) {
+      // Handle Supabase-specific auth errors
+      SafeSnackBar.showError(
+        context, 
+        message: 'Failed to resend verification email: ${e.message}'
+      );
     } catch (e) {
-      SafeSnackBar.showError(context, message: 'Failed to resend verification email: $e');
+      // Handle general errors
+      SafeSnackBar.showError(
+        context, 
+        message: 'Failed to resend verification email: $e'
+      );
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
