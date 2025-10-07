@@ -206,6 +206,33 @@ class EmployerRegistrationService {
         'created_at': DateTime.now().toIso8601String(),
       };
 
+      // First, create/update the user profile with employer role
+      debugPrint('👤 Creating/updating user profile with employer role');
+      final profileData = {
+        'id': userId,
+        'email': registrationData.email.trim().toLowerCase(),
+        'full_name': registrationData.fullName.trim(),
+        'display_name': registrationData.displayName?.trim() ?? registrationData.fullName.trim(),
+        'username': registrationData.username?.trim().toLowerCase(),
+        'phone_number': registrationData.phoneNumber?.trim(),
+        'birthday': registrationData.birthday?.toIso8601String(),
+        'role': 'employer', // Set role as employer
+        'created_at': DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+      };
+
+      try {
+        await _supabase
+            .from('profiles')
+            .upsert(profileData);
+
+        debugPrint('✅ User profile created/updated with employer role');
+      } catch (e) {
+        debugPrint('❌ Error creating/updating profile: $e');
+        debugPrint('❌ Profile data: ${profileData.toString()}');
+        rethrow;
+      }
+
       debugPrint('🏢 Creating company with data: $companyData');
 
       String companyId;
@@ -569,6 +596,33 @@ class EmployerRegistrationService {
       
       final userId = user.id;
       debugPrint('✅ User authenticated: $userId');
+      
+      // First, create/update the user profile with employer role
+      debugPrint('👤 Creating/updating user profile with employer role');
+      final profileData = {
+        'id': userId,
+        'email': registrationData.email.trim().toLowerCase(),
+        'full_name': registrationData.fullName.trim(),
+        'display_name': registrationData.displayName?.trim() ?? registrationData.fullName.trim(),
+        'username': registrationData.username?.trim().toLowerCase(),
+        'phone_number': registrationData.phoneNumber?.trim(),
+        'birthday': registrationData.birthday?.toIso8601String(),
+        'role': 'employer', // Set role as employer
+        'created_at': DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+      };
+
+      try {
+        await _supabase
+            .from('profiles')
+            .upsert(profileData);
+
+        debugPrint('✅ User profile created/updated with employer role');
+      } catch (e) {
+        debugPrint('❌ Error creating/updating profile: $e');
+        debugPrint('❌ Profile data: ${profileData.toString()}');
+        throw Exception('Failed to create/update user profile: $e');
+      }
       
       // Create company profile
       final companyData = {
