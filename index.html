@@ -28,6 +28,9 @@
     <!-- SEO and Privacy -->
     <meta name="robots" content="noindex, nofollow" />
     <meta name="description" content="Email verification for Hanapbuhay - Connecting Filipino job seekers with employers nationwide" />
+    
+    <!-- Favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💼</text></svg>">
 
     <!-- Supabase SDK -->
     <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
@@ -320,7 +323,7 @@
       } catch (e) {
         log("error", "Failed to initialize Supabase client", { error: e.message });
         showError("Failed to initialize verification service.");
-        return;
+        // Don't return here - let the page continue to load
       }
 
       // Get URL parameters
@@ -345,6 +348,13 @@
           return;
         }
 
+        // Ensure supabase is initialized
+        if (!supabase) {
+          log("error", "Supabase client not initialized");
+          showError("Verification service not available. Please try again later.");
+          return;
+        }
+
         try {
           // Check for errors first
           if (error) {
@@ -355,23 +365,38 @@
 
           // Handle different verification scenarios
           if (code) {
-            log("info", "Processing code-based email verification");
+            log("info", "Processing code-based email verification", { code: code.substring(0, 8) + "..." });
             
             try {
-              // Try exchangeCodeForSession first (recommended by Supabase)
+              // Try exchangeCodeForSession first (recommended by Supabase for PKCE flow)
+              log("info", "Attempting exchangeCodeForSession");
               const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
 
               if (exchangeError) {
                 log("warn", "exchangeCodeForSession failed, trying verifyOtp", { error: exchangeError.message });
                 
-                // Fallback to verifyOtp
+                // Fallback to verifyOtp for email verification
+                log("info", "Attempting verifyOtp");
                 const { data, error: verifyError } = await supabase.auth.verifyOtp({
                   token: code,
                   type: "email",
                 });
 
                 if (verifyError) {
-                  log("error", "verifyOtp also failed", { error: verifyError.message });
+                  log("error", "Both verification methods failed", { 
+                    exchangeError: exchangeError.message,
+                    verifyError: verifyError.message 
+                  });
+                  
+                  // Check if user is already verified by trying to get current session
+                  const { data: { user } } = await supabase.auth.getUser();
+                  if (user && user.email_confirmed_at) {
+                    log("info", "User is already verified");
+                    showSuccess();
+                    setTimeout(() => tryOpenApp(), 2000);
+                    return;
+                  }
+                  
                   showError("Failed to verify your email. The verification code may be expired or invalid. Please try logging into the app - your email might already be verified.");
                   return;
                 }
@@ -380,12 +405,29 @@
                 showSuccess();
                 setTimeout(() => tryOpenApp(), 2000);
               } else {
-                log("info", "Email verification successful via exchangeCodeForSession");
+                log("info", "Email verification successful via exchangeCodeForSession", { 
+                  user: data.user?.email,
+                  session: !!data.session 
+                });
                 showSuccess();
                 setTimeout(() => tryOpenApp(), 2000);
               }
             } catch (e) {
               log("error", "Verification process error", { error: e.message });
+              
+              // Check if user is already verified
+              try {
+                const { data: { user } } = await supabase.auth.getUser();
+                if (user && user.email_confirmed_at) {
+                  log("info", "User is already verified despite error");
+                  showSuccess();
+                  setTimeout(() => tryOpenApp(), 2000);
+                  return;
+                }
+              } catch (checkError) {
+                log("warn", "Could not check user status", { error: checkError.message });
+              }
+              
               showError("An error occurred during verification. Please try logging into the app - your email might already be verified.");
             }
           } else if (accessToken && refreshToken) {
@@ -674,14 +716,30 @@
         }
       });
 
-      // Start verification process
-      const hasAnyParams = window.location.search.length > 1;
-      if (!hasAnyParams) {
-        log("info", "Direct page access detected");
-        showDirectAccess();
+      // Initialize verification process
+      function initializeVerification() {
+        try {
+          // Start verification process
+          const hasAnyParams = window.location.search.length > 1;
+          if (!hasAnyParams) {
+            log("info", "Direct page access detected");
+            showDirectAccess();
+          } else {
+            log("info", "Starting verification process");
+            handleVerification();
+          }
+        } catch (error) {
+          log("error", "Failed to initialize verification", { error: error.message });
+          showError("Failed to start verification process. Please try again.");
+        }
+      }
+
+      // Wait for DOM to be ready and Supabase to load
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initializeVerification);
       } else {
-        log("info", "Starting verification process");
-        handleVerification();
+        // DOM is already ready
+        setTimeout(initializeVerification, 100);
       }
     </script>
   </body>
