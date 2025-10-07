@@ -405,25 +405,40 @@ class InputSecurityService {
     // Remove all non-digit characters for validation
     final digitsOnly = value.replaceAll(RegExp(r'[^0-9]'), '');
 
-    // Check length - accept both 10 and 11 digits (with or without leading 0)
-    if (digitsOnly.length != 10 && digitsOnly.length != 11) {
-      return 'Phone number must be 10 or 11 digits';
+    // Check length - accept 10, 11, or 12 digits
+    if (digitsOnly.length < 10 || digitsOnly.length > 11) {
+      return 'Phone number must be 10-11 digits';
     }
 
-    // Handle 11-digit numbers (remove leading 0)
+    // Handle different formats:
+    // 09XXXXXXXXX (11 digits with leading 0)
+    // 9XXXXXXXXX (10 digits)
+    // +639XXXXXXXXX (12 digits with country code)
+    // 639XXXXXXXXX (11 digits with country code)
+    
     String normalizedDigits = digitsOnly;
-    if (digitsOnly.length == 11 && digitsOnly.startsWith('0')) {
-      normalizedDigits = digitsOnly.substring(1);
+    
+    // Remove country code if present
+    if (digitsOnly.length == 12 && digitsOnly.startsWith('63')) {
+      normalizedDigits = digitsOnly.substring(2);
+    } else if (digitsOnly.length == 11 && digitsOnly.startsWith('63')) {
+      normalizedDigits = digitsOnly.substring(2);
+    }
+    
+    // Remove leading 0 if present
+    if (normalizedDigits.length == 11 && normalizedDigits.startsWith('0')) {
+      normalizedDigits = normalizedDigits.substring(1);
+    }
+
+    // Must be 10 digits after normalization
+    if (normalizedDigits.length != 10) {
+      return 'Invalid phone number format';
     }
 
     // Must start with 9 (Philippine mobile prefix)
     if (!normalizedDigits.startsWith('9')) {
       return 'Phone number must start with 9';
     }
-
-    // Valid Philippine mobile number patterns:
-    // 9XXXXXXXXX (10 digits total)
-    // Common prefixes: 917, 918, 919, 920-929, 930-939, etc.
 
     return null;
   }

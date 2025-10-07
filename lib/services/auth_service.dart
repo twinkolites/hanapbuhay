@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'new_user_detection_service.dart';
 
 class AuthService {
   static final SupabaseClient _supabase = Supabase.instance.client;
@@ -65,6 +66,17 @@ class AuthService {
       if (response.user != null) {
         // Create user profile in Supabase
         await _createOrUpdateUserProfile(response.user!, birthday: birthday);
+        
+        // Track new user signup
+        await NewUserDetectionService.trackOnboardingProgress(
+          userId: response.user!.id,
+          step: 'signup_completed',
+          data: {
+            'signup_method': 'email',
+            'has_birthday': birthday != null,
+            'has_phone': phoneNumber != null,
+          },
+        );
       }
 
       return response;
@@ -101,6 +113,16 @@ class AuthService {
           response.user!.id,
           true,
           email.trim().toLowerCase(),
+        );
+
+        // Track login (check if new user)
+        await NewUserDetectionService.trackOnboardingProgress(
+          userId: response.user!.id,
+          step: 'login_completed',
+          data: {
+            'login_method': 'email',
+            'is_new_user': await NewUserDetectionService.isNewUser(response.user!.id),
+          },
         );
 
         // Save tokens locally
@@ -171,6 +193,16 @@ class AuthService {
           response.user!.id,
           true,
           response.user!.email ?? 'google_oauth',
+        );
+
+        // Track login (check if new user)
+        await NewUserDetectionService.trackOnboardingProgress(
+          userId: response.user!.id,
+          step: 'login_completed',
+          data: {
+            'login_method': 'google',
+            'is_new_user': await NewUserDetectionService.isNewUser(response.user!.id),
+          },
         );
 
         // Save tokens locally

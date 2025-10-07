@@ -8,6 +8,9 @@ import 'register_screen.dart';
 import 'forgot_password_screen.dart';
 import 'applicant/home_screen.dart';
 import 'employer/home_screen.dart';
+import 'admin/admin_dashboard_screen.dart';
+import 'employer/employer_registration_screen.dart';
+import 'employer/employer_application_status_screen.dart';
 import '../services/input_security_service.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -229,21 +232,10 @@ class _LoginScreenState extends State<LoginScreen>
           return;
         }
 
-        // Show success toast
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Login successful! Welcome back!'),
-            backgroundColor: mediumSeaGreen,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-            duration: const Duration(seconds: 2),
-          ),
-        );
-
-        // Navigate to appropriate screen based on user role
-        // Session persistence is automatically handled by Supabase
+        // Add a small delay to ensure any pending animations complete
+        await Future.delayed(const Duration(milliseconds: 200));
+        
+        // Check user role and handle employer approval workflow
         await _checkUserRoleAndNavigate();
       } else if (mounted && authProvider.error != null) {
         _showErrorDialog(authProvider.error!);
@@ -422,8 +414,7 @@ class _LoginScreenState extends State<LoginScreen>
           ),
         );
 
-        // Navigate to appropriate screen based on user role
-        // Session persistence is automatically handled by Supabase
+        // Check user role and handle employer approval workflow
         await _checkUserRoleAndNavigate();
       } else if (mounted && authProvider.error != null) {
         _showErrorDialog(authProvider.error!);
@@ -433,7 +424,7 @@ class _LoginScreenState extends State<LoginScreen>
     }
   }
 
-  // Add this function to check user role and navigate
+  // Check user role and handle employer approval workflow
   Future<void> _checkUserRoleAndNavigate() async {
     try {
       final user = supabase.auth.currentUser;
@@ -441,19 +432,31 @@ class _LoginScreenState extends State<LoginScreen>
         _showErrorDialog('No user found after login.');
         return;
       }
+      
+      // Get user profile and verification status
       final profile = await supabase
           .from('profiles')
           .select('role')
           .eq('id', user.id)
           .maybeSingle();
+      
       final role = profile != null && profile['role'] != null
           ? profile['role'] as String
           : 'applicant';
-      if (role == 'employer') {
+      
+      // Add a small delay to prevent animation conflicts
+      await Future.delayed(const Duration(milliseconds: 100));
+      
+      if (!mounted) return;
+      
+      if (role == 'admin') {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (context) => const EmployerHomeScreen()),
+          MaterialPageRoute(builder: (context) => const AdminDashboardScreen()),
         );
+      } else if (role == 'employer') {
+        // Check employer verification status
+        await _checkEmployerApprovalStatus(user.id);
       } else {
         Navigator.pushReplacement(
           context,
@@ -462,41 +465,121 @@ class _LoginScreenState extends State<LoginScreen>
       }
     } catch (e) {
       _showErrorDialog('Failed to check user role. Defaulting to applicant.');
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const HomeScreen()),
-      );
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const HomeScreen()),
+        );
+      }
+    }
+  }
+
+  // Check employer approval status and handle accordingly
+  Future<void> _checkEmployerApprovalStatus(String userId) async {
+    try {
+      // Check employer verification status
+      final verification = await supabase
+          .from('employer_verification')
+          .select('verification_status, rejection_reason, admin_notes')
+          .eq('employer_id', userId)
+          .maybeSingle();
+      
+      if (verification == null) {
+        // No verification record found - navigate to status screen
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const EmployerApplicationStatusScreen()),
+        );
+        return;
+      }
+      
+      final status = verification['verification_status'] as String?;
+      
+      switch (status) {
+        case 'approved':
+          // Navigate to employer dashboard
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const EmployerHomeScreen()),
+          );
+          break;
+        case 'pending':
+        case 'rejected':
+        default:
+          // Navigate to employer application status screen
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const EmployerApplicationStatusScreen()),
+          );
+          break;
+      }
+    } catch (e) {
+      _showErrorDialog('Failed to check employer approval status.');
     }
   }
 
   Widget _buildCreateAccountLink() {
     return Center(
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
+      child: Column(
         children: [
-          Text(
-            "Don't have an account? ",
-            style: TextStyle(
-              color: darkTeal.withValues(alpha: 0.7),
-              fontSize: 11,
-            ),
-          ),
-          GestureDetector(
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const RegisterScreen()),
-              );
-            },
-            child: Text(
-              'Create account',
-              style: TextStyle(
-                color: mediumSeaGreen,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                decoration: TextDecoration.underline,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                "Don't have an account? ",
+                style: TextStyle(
+                  color: darkTeal.withValues(alpha: 0.7),
+                  fontSize: 11,
+                ),
               ),
-            ),
+              GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const RegisterScreen()),
+                  );
+                },
+                child: Text(
+                  'Create account',
+                  style: TextStyle(
+                    color: mediumSeaGreen,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                "Are you an employer? ",
+                style: TextStyle(
+                  color: darkTeal.withValues(alpha: 0.7),
+                  fontSize: 11,
+                ),
+              ),
+              GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const EmployerRegistrationScreen()),
+                  );
+                },
+                child: Text(
+                  'Register as Employer',
+                  style: TextStyle(
+                    color: Colors.blue,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),

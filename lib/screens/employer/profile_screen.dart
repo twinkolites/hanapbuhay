@@ -21,6 +21,9 @@ class _EmployerProfileScreenState extends State<EmployerProfileScreen> with Tick
   List<Map<String, dynamic>> _jobs = [];
   bool _isLoading = true;
   
+  // Cache timestamp to prevent unnecessary reloads
+  DateTime? _lastDataLoad;
+  
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
@@ -68,6 +71,48 @@ class _EmployerProfileScreenState extends State<EmployerProfileScreen> with Tick
       final user = supabase.auth.currentUser;
       if (user == null) return;
 
+      // Use optimized stored procedure to get all employer data in one query
+      final response = await supabase.rpc('get_employer_profile_data', params: {
+        'user_uuid': user.id,
+      });
+
+      if (response is List && response.isNotEmpty) {
+        final profileData = response.first;
+        
+        // Parse user profile
+        final userProfileData = profileData['user_profile'] as Map<String, dynamic>?;
+        
+        // Parse company data
+        final companyData = profileData['company_data'] as Map<String, dynamic>?;
+        
+        // Parse jobs data
+        final jobsData = profileData['jobs_data'] as List<dynamic>?;
+        final jobs = jobsData != null 
+            ? List<Map<String, dynamic>>.from(jobsData)
+            : <Map<String, dynamic>>[];
+
+        setState(() {
+          _userProfile = userProfileData;
+          _company = companyData;
+          _jobs = jobs;
+          _isLoading = false;
+          _lastDataLoad = DateTime.now(); // Cache timestamp
+        });
+      } else {
+        // Fallback to original method if procedure fails
+        await _loadProfileDataFallback();
+      }
+    } catch (e) {
+      // Fallback to original method if procedure fails
+      await _loadProfileDataFallback();
+    }
+  }
+
+  Future<void> _loadProfileDataFallback() async {
+    try {
+      final user = supabase.auth.currentUser;
+      if (user == null) return;
+
       // Load user profile
       final profileResponse = await supabase
           .from('profiles')
@@ -82,6 +127,12 @@ class _EmployerProfileScreenState extends State<EmployerProfileScreen> with Tick
       List<Map<String, dynamic>> jobs = [];
       if (company != null) {
         jobs = await JobService.getJobsByCompany(company['id']);
+        
+        // Fetch application counts for each job
+        for (int i = 0; i < jobs.length; i++) {
+          final applications = await JobService.getJobApplications(jobs[i]['id']);
+          jobs[i]['applications_count'] = applications.length;
+        }
       }
 
       setState(() {
@@ -150,6 +201,14 @@ class _EmployerProfileScreenState extends State<EmployerProfileScreen> with Tick
         // Reload data if profile was updated
         await _loadProfileData();
       }
+    }
+  }
+
+  // Method to refresh data when needed (e.g., when returning from other screens)
+  Future<void> refreshProfileData() async {
+    final now = DateTime.now();
+    if (_lastDataLoad == null || now.difference(_lastDataLoad!).inSeconds > 30) {
+      await _loadProfileData();
     }
   }
 
@@ -371,34 +430,56 @@ class _EmployerProfileScreenState extends State<EmployerProfileScreen> with Tick
     final totalJobs = _jobs.length;
     final activeJobs = _jobs.where((job) => job['status'] == 'open').length;
     final totalApplications = _jobs.fold<int>(0, (sum, job) => sum + ((job['applications_count'] as int?) ?? 0));
+    final avgApplicationsPerJob = totalJobs > 0 ? (totalApplications / totalJobs).toStringAsFixed(1) : '0.0';
 
-    return Row(
+    return Column(
       children: [
-        Expanded(
-          child: _buildStatCard(
-            'Total Jobs',
-            totalJobs.toString(),
-            Icons.work,
-            mediumSeaGreen,
-          ),
+        // First row
+        Row(
+          children: [
+            Expanded(
+              child: _buildStatCard(
+                'Total Jobs',
+                totalJobs.toString(),
+                Icons.work,
+                mediumSeaGreen,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildStatCard(
+                'Active Jobs',
+                activeJobs.toString(),
+                Icons.check_circle,
+                paleGreen,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _buildStatCard(
-            'Active Jobs',
-            activeJobs.toString(),
-            Icons.check_circle,
-            paleGreen,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _buildStatCard(
-            'Applications',
-            totalApplications.toString(),
-            Icons.people,
-            darkTeal,
-          ),
+        
+        const SizedBox(height: 12),
+        
+        // Second row
+        Row(
+          children: [
+            Expanded(
+              child: _buildStatCard(
+                'Total Applications',
+                totalApplications.toString(),
+                Icons.people,
+                darkTeal,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildStatCard(
+                'Avg per Job',
+                avgApplicationsPerJob,
+                Icons.trending_up,
+                Colors.orange,
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -704,6 +785,8 @@ class _EmployerProfileScreenState extends State<EmployerProfileScreen> with Tick
   }
 
   Widget _buildJobCard(Map<String, dynamic> job) {
+    final applicationsCount = job['applications_count'] as int? ?? 0;
+    
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -721,49 +804,76 @@ class _EmployerProfileScreenState extends State<EmployerProfileScreen> with Tick
           ),
         ],
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  job['title'] ?? 'Untitled Job',
-                  style: const TextStyle(
-                    color: darkTeal,
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      job['title'] ?? 'Untitled Job',
+                      style: const TextStyle(
+                        color: darkTeal,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      job['location'] ?? 'Location not specified',
+                      style: TextStyle(
+                        color: darkTeal.withValues(alpha: 0.7),
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  job['location'] ?? 'Location not specified',
-                  style: TextStyle(
-                    color: darkTeal.withValues(alpha: 0.7),
-                    fontSize: 11,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: job['status'] == 'open' 
-                ? mediumSeaGreen.withValues(alpha: 0.1)
-                : Colors.grey.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              job['status'] == 'open' ? 'Active' : 'Closed',
-              style: TextStyle(
-                color: job['status'] == 'open' ? mediumSeaGreen : Colors.grey,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
               ),
-            ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: job['status'] == 'open' 
+                    ? mediumSeaGreen.withValues(alpha: 0.1)
+                    : Colors.grey.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  job['status'] == 'open' ? 'Active' : 'Closed',
+                  style: TextStyle(
+                    color: job['status'] == 'open' ? mediumSeaGreen : Colors.grey,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 8),
+          
+          // Application count
+          Row(
+            children: [
+              Icon(
+                Icons.people_outline,
+                color: mediumSeaGreen,
+                size: 14,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                '$applicationsCount application${applicationsCount == 1 ? '' : 's'}',
+                style: TextStyle(
+                  color: mediumSeaGreen,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
           ),
         ],
       ),

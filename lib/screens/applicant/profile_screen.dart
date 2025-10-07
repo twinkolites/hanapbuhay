@@ -5,6 +5,7 @@ import 'edit_profile_screen.dart';
 import 'applications_screen.dart';
 import 'saved_jobs_screen.dart';
 import '../login_screen.dart';
+import 'application_profile_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -33,6 +34,14 @@ class _ProfileScreenState extends State<ProfileScreen> with TickerProviderStateM
   int _savedCount = 0;
   int _interviewsCount = 0;
   bool _isStatsLoading = true;
+  
+  // Application profile data
+  Map<String, dynamic>? _applicationProfile;
+  int _profileCompleteness = 0;
+  bool _isProfileLoading = true;
+  
+  // Cache timestamp to prevent unnecessary reloads
+  DateTime? _lastDataLoad;
 
   @override
   void initState() {
@@ -72,53 +81,146 @@ class _ProfileScreenState extends State<ProfileScreen> with TickerProviderStateM
           _currentUser = user;
         });
         
-        // Load profile data from Supabase, use maybeSingle() to handle missing profiles
-        final response = await Supabase.instance.client
-            .from('profiles')
-            .select()
-            .eq('id', user.id)
-            .maybeSingle();
-            
-        if (response != null) {
-          setState(() {
-            _userProfile = response;
-            _isLoading = false;
-          });
-        } else {
-          // Profile doesn't exist, create a basic one
-          final newProfile = {
-            'id': user.id,
-            'email': user.email,
-            'full_name': user.userMetadata?['full_name'] ?? '',
-            'display_name': user.userMetadata?['display_name'] ?? user.userMetadata?['full_name'] ?? '',
-            'username': user.userMetadata?['username'] ?? '',
-            'avatar_url': user.userMetadata?['avatar_url'] ?? '',
-            'phone_number': user.userMetadata?['phone_number'] ?? '',
-            'created_at': DateTime.now().toIso8601String(),
-            'updated_at': DateTime.now().toIso8601String(),
-          };
-
-          // Insert the new profile
-          await Supabase.instance.client
-              .from('profiles')
-              .insert(newProfile);
-
-          setState(() {
-            _userProfile = newProfile;
-            _isLoading = false;
-          });
-        }
-        
-        // Load real statistics
-        await _loadStatistics();
+        // Use optimized procedure to get ALL data in one call
+        await _loadAllProfileData();
       }
     } catch (e) {
       setState(() {
         _isLoading = false;
+        _isStatsLoading = false;
+        _isProfileLoading = false;
       });
     }
     
     _animationController.forward();
+  }
+
+  Future<void> _loadAllProfileData() async {
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) return;
+
+      // Use optimized stored procedure to get all profile data in one query
+      final response = await Supabase.instance.client.rpc('get_applicant_profile_stats', params: {
+        'user_uuid': user.id,
+      });
+
+      if (response is List && response.isNotEmpty) {
+        final statsData = response.first;
+        
+        // Parse user profile
+        final userProfileData = statsData['user_profile'] as Map<String, dynamic>?;
+        
+        // Parse application profile
+        final applicationProfileData = statsData['application_profile'] as Map<String, dynamic>?;
+        
+        setState(() {
+          _userProfile = userProfileData;
+          _applicationProfile = applicationProfileData;
+          _appliedCount = (statsData['applied_count'] as num).toInt();
+          _savedCount = (statsData['saved_count'] as num).toInt();
+          _interviewsCount = (statsData['interviews_count'] as num).toInt();
+          _profileCompleteness = statsData['profile_completeness'] as int? ?? 0;
+          _isLoading = false;
+          _isStatsLoading = false;
+          _isProfileLoading = false;
+          _lastDataLoad = DateTime.now(); // Cache timestamp
+        });
+      } else {
+        // Profile doesn't exist, create a basic one and retry
+        await _createBasicProfile();
+      }
+    } catch (e) {
+      // Fallback to separate queries if procedure fails
+      await _loadProfileDataFallback();
+    }
+  }
+
+  Future<void> _createBasicProfile() async {
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) return;
+
+      final newProfile = {
+        'id': user.id,
+        'email': user.email,
+        'full_name': user.userMetadata?['full_name'] ?? '',
+        'display_name': user.userMetadata?['display_name'] ?? user.userMetadata?['full_name'] ?? '',
+        'username': user.userMetadata?['username'] ?? '',
+        'avatar_url': user.userMetadata?['avatar_url'] ?? '',
+        'phone_number': user.userMetadata?['phone_number'] ?? '',
+        'created_at': DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+      };
+
+      // Insert the new profile
+      await Supabase.instance.client
+          .from('profiles')
+          .insert(newProfile);
+
+      // Retry loading with the new profile
+      await _loadAllProfileData();
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+        _isStatsLoading = false;
+        _isProfileLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadProfileDataFallback() async {
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) return;
+
+      // Load profile data from Supabase, use maybeSingle() to handle missing profiles
+      final response = await Supabase.instance.client
+          .from('profiles')
+          .select()
+          .eq('id', user.id)
+          .maybeSingle();
+          
+      if (response != null) {
+        setState(() {
+          _userProfile = response;
+          _isLoading = false;
+        });
+      } else {
+        // Profile doesn't exist, create a basic one
+        final newProfile = {
+          'id': user.id,
+          'email': user.email,
+          'full_name': user.userMetadata?['full_name'] ?? '',
+          'display_name': user.userMetadata?['display_name'] ?? user.userMetadata?['full_name'] ?? '',
+          'username': user.userMetadata?['username'] ?? '',
+          'avatar_url': user.userMetadata?['avatar_url'] ?? '',
+          'phone_number': user.userMetadata?['phone_number'] ?? '',
+          'created_at': DateTime.now().toIso8601String(),
+          'updated_at': DateTime.now().toIso8601String(),
+        };
+
+        // Insert the new profile
+        await Supabase.instance.client
+            .from('profiles')
+            .insert(newProfile);
+
+        setState(() {
+          _userProfile = newProfile;
+          _isLoading = false;
+        });
+      }
+      
+      // Load statistics and application profile separately
+      await _loadStatistics();
+      await _loadApplicationProfile();
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+        _isStatsLoading = false;
+        _isProfileLoading = false;
+      });
+    }
   }
 
   Future<void> _loadStatistics() async {
@@ -126,40 +228,68 @@ class _ProfileScreenState extends State<ProfileScreen> with TickerProviderStateM
       final user = Supabase.instance.client.auth.currentUser;
       if (user == null) return;
 
-      // Load applications count
-      final applicationsResponse = await Supabase.instance.client
-          .from('job_applications')
-          .select('id')
-          .eq('applicant_id', user.id);
-      
-      final appliedCount = applicationsResponse.length;
-
-      // Load saved jobs count
-      final savedJobsResponse = await Supabase.instance.client
-          .from('saved_jobs')
-          .select('seeker_id, job_id')
-          .eq('seeker_id', user.id);
-      
-      final savedCount = savedJobsResponse.length;
-
-      // Load interviews count (applications with status 'interviewed')
-      final interviewsResponse = await Supabase.instance.client
-          .from('job_applications')
-          .select('id')
-          .eq('applicant_id', user.id)
-          .eq('status', 'interviewed');
-      
-      final interviewsCount = interviewsResponse.length;
-
-      setState(() {
-        _appliedCount = appliedCount;
-        _savedCount = savedCount;
-        _interviewsCount = interviewsCount;
-        _isStatsLoading = false;
+      // Use optimized stored procedure to get all statistics in one query
+      final response = await Supabase.instance.client.rpc('get_applicant_profile_stats', params: {
+        'user_uuid': user.id,
       });
+
+      if (response is List && response.isNotEmpty) {
+        final statsData = response.first;
+        
+        setState(() {
+          _appliedCount = (statsData['applied_count'] as num).toInt();
+          _savedCount = (statsData['saved_count'] as num).toInt();
+          _interviewsCount = (statsData['interviews_count'] as num).toInt();
+          _isStatsLoading = false;
+        });
+      } else {
+        setState(() {
+          _appliedCount = 0;
+          _savedCount = 0;
+          _interviewsCount = 0;
+          _isStatsLoading = false;
+        });
+      }
     } catch (e) {
       setState(() {
+        _appliedCount = 0;
+        _savedCount = 0;
+        _interviewsCount = 0;
         _isStatsLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadApplicationProfile() async {
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) return;
+
+      // Use optimized stored procedure to get application profile data
+      final response = await Supabase.instance.client.rpc('get_applicant_profile_stats', params: {
+        'user_uuid': user.id,
+      });
+
+      if (response is List && response.isNotEmpty) {
+        final statsData = response.first;
+        final applicationProfileData = statsData['application_profile'] as Map<String, dynamic>?;
+        
+        setState(() {
+          _applicationProfile = applicationProfileData;
+          _profileCompleteness = statsData['profile_completeness'] as int? ?? 0;
+          _isProfileLoading = false;
+        });
+      } else {
+        // No profile exists yet
+        setState(() {
+          _applicationProfile = null;
+          _profileCompleteness = 0;
+          _isProfileLoading = false;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _isProfileLoading = false;
       });
     }
   }
@@ -179,10 +309,18 @@ class _ProfileScreenState extends State<ProfileScreen> with TickerProviderStateM
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Refresh statistics when screen becomes active
+    // Only refresh if data is missing or cache is old (older than 30 seconds)
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_isLoading && _currentUser != null) {
-        _loadStatistics();
+      if (!_isLoading && !_isStatsLoading && !_isProfileLoading && _currentUser != null) {
+        final now = DateTime.now();
+        final shouldRefresh = _userProfile == null || 
+            _appliedCount == 0 && _savedCount == 0 && _interviewsCount == 0 ||
+            _lastDataLoad == null || 
+            now.difference(_lastDataLoad!).inSeconds > 30;
+            
+        if (shouldRefresh) {
+          _loadAllProfileData();
+        }
       }
     });
   }
@@ -306,6 +444,8 @@ class _ProfileScreenState extends State<ProfileScreen> with TickerProviderStateM
       child: Column(
         children: [
           _buildProfileCard(),
+          const SizedBox(height: 24),
+          _buildApplicationProfileCard(),
           const SizedBox(height: 24),
           _buildStatsSection(),
           const SizedBox(height: 24),
@@ -433,6 +573,291 @@ class _ProfileScreenState extends State<ProfileScreen> with TickerProviderStateM
         ],
       ),
     );
+  }
+
+  Widget _buildApplicationProfileCard() {
+    if (_isProfileLoading) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: darkTeal.withValues(alpha: 0.1),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: const Center(
+          child: CircularProgressIndicator(
+            color: mediumSeaGreen,
+          ),
+        ),
+      );
+    }
+
+    final hasProfile = _applicationProfile != null;
+    final completeness = _profileCompleteness;
+    
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: darkTeal.withValues(alpha: 0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: mediumSeaGreen.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  hasProfile ? Icons.badge_outlined : Icons.person_add_outlined,
+                  color: mediumSeaGreen,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      hasProfile ? 'Application Profile' : 'Create Application Profile',
+                      style: const TextStyle(
+                        color: darkTeal,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      hasProfile 
+                        ? 'Complete your professional profile for better job matches'
+                        : 'Build your professional profile to stand out to employers',
+                      style: TextStyle(
+                        color: darkTeal.withValues(alpha: 0.6),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 16),
+          
+          // Progress section
+          if (hasProfile) ...[
+            // Progress bar
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Profile Completeness',
+                      style: TextStyle(
+                        color: darkTeal.withValues(alpha: 0.8),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      '$completeness%',
+                      style: TextStyle(
+                        color: completeness >= 80 ? mediumSeaGreen : completeness >= 50 ? Colors.orange : Colors.red,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                LinearProgressIndicator(
+                  value: completeness / 100,
+                  backgroundColor: paleGreen.withValues(alpha: 0.3),
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    completeness >= 80 ? mediumSeaGreen : completeness >= 50 ? Colors.orange : Colors.red,
+                  ),
+                  minHeight: 6,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _getCompletenessMessage(completeness),
+                  style: TextStyle(
+                    color: darkTeal.withValues(alpha: 0.6),
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+          ],
+          
+          // Action button
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ApplicationProfileScreen(
+                      applicationProfile: _applicationProfile,
+                      onProfileUpdated: () {
+                        _loadApplicationProfile();
+                      },
+                    ),
+                  ),
+                );
+                // Refresh profile data when returning
+                _loadApplicationProfile();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: hasProfile ? mediumSeaGreen : darkTeal,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 2,
+              ),
+              icon: Icon(
+                hasProfile ? Icons.edit_outlined : Icons.add_circle_outline,
+                size: 18,
+              ),
+              label: Text(
+                hasProfile ? 'Update Profile' : 'Create Profile',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+          
+          // Quick stats if profile exists
+          if (hasProfile) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: lightMint.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: paleGreen.withValues(alpha: 0.3),
+                  width: 1,
+                ),
+              ),
+              child: Row(
+                children: [
+                  _buildQuickStat(
+                    'Skills',
+                    _getSkillsCount(),
+                    Icons.star_outline,
+                    mediumSeaGreen,
+                  ),
+                  const SizedBox(width: 16),
+                  _buildQuickStat(
+                    'Experience',
+                    _getExperienceYears(),
+                    Icons.work_outline,
+                    paleGreen,
+                  ),
+                  const SizedBox(width: 16),
+                  _buildQuickStat(
+                    'Education',
+                    _getEducationCount(),
+                    Icons.school_outlined,
+                    darkTeal,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickStat(String label, String value, IconData icon, Color color) {
+    return Expanded(
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            color: color,
+            size: 16,
+          ),
+          const SizedBox(width: 6),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                value,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Text(
+                label,
+                style: TextStyle(
+                  color: color.withValues(alpha: 0.7),
+                  fontSize: 10,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getCompletenessMessage(int completeness) {
+    if (completeness >= 90) return 'Excellent! Your profile is complete and professional.';
+    if (completeness >= 80) return 'Great! Your profile looks professional.';
+    if (completeness >= 70) return 'Good progress! Add more details to stand out.';
+    if (completeness >= 50) return 'Getting there! Complete more sections for better visibility.';
+    if (completeness >= 30) return 'Start building your profile to attract employers.';
+    return 'Create your professional profile to get started.';
+  }
+
+  String _getSkillsCount() {
+    if (_applicationProfile == null) return '0';
+    final skills = _applicationProfile!['skills'] as List?;
+    return '${skills?.length ?? 0}';
+  }
+
+  String _getExperienceYears() {
+    if (_applicationProfile == null) return '0';
+    final years = _applicationProfile!['years_of_experience'] as int?;
+    return '${years ?? 0}y';
+  }
+
+  String _getEducationCount() {
+    if (_applicationProfile == null) return '0';
+    final education = _applicationProfile!['education'] as List?;
+    return '${education?.length ?? 0}';
   }
 
   Widget _buildStatsSection() {

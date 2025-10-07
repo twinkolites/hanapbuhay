@@ -38,6 +38,18 @@ class AppConfig {
   // Other API Keys
   static String get googleMapsApiKey => dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
   static String get firebaseApiKey => dotenv.env['FIREBASE_API_KEY'] ?? '';
+  static String get geminiApiKey => dotenv.env['GEMINI_API_KEY'] ?? '';
+  
+  // ZEGOCLOUD Video Calling Configuration
+  static int get zegoAppId {
+    final appId = dotenv.env['ZEGO_APP_ID'];
+    if (appId == null || appId.isEmpty) {
+      return 0; // Return 0 if not configured
+    }
+    return int.tryParse(appId) ?? 0;
+  }
+  
+  static String get zegoAppSign => dotenv.env['ZEGO_APP_SIGN'] ?? '';
 
   // Debug Configuration
   static bool get isDebug => kDebugMode;

@@ -30,6 +30,10 @@ class _PostJobScreenState extends State<PostJobScreen> with TickerProviderStateM
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
+  
+  // Safe references to inherited widgets
+  ScaffoldMessengerState? _scaffoldMessenger;
+  NavigatorState? _navigator;
 
   // Color palette
   static const Color lightMint = Color(0xFFEAF9E7);
@@ -75,6 +79,14 @@ class _PostJobScreenState extends State<PostJobScreen> with TickerProviderStateM
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Safely capture references to inherited widgets
+    _scaffoldMessenger = ScaffoldMessenger.maybeOf(context);
+    _navigator = Navigator.maybeOf(context);
+  }
+
+  @override
   void dispose() {
     _animationController.dispose();
     _titleController.dispose();
@@ -83,6 +95,11 @@ class _PostJobScreenState extends State<PostJobScreen> with TickerProviderStateM
     _salaryMinController.dispose();
     _salaryMaxController.dispose();
     _experienceLevelController.dispose();
+    
+    // Clear references to inherited widgets
+    _scaffoldMessenger = null;
+    _navigator = null;
+    
     super.dispose();
   }
 
@@ -93,6 +110,12 @@ class _PostJobScreenState extends State<PostJobScreen> with TickerProviderStateM
 
     // Validate salary range
     if (!_validateSalaryRange()) {
+      return;
+    }
+
+    // Validate company data
+    if (widget.company['id'] == null) {
+      _showErrorDialog('Company information is missing. Please try again.');
       return;
     }
 
@@ -118,29 +141,38 @@ class _PostJobScreenState extends State<PostJobScreen> with TickerProviderStateM
             : null,
       );
 
-      if (job != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Job posted successfully!'),
-            backgroundColor: mediumSeaGreen,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
+      if (job != null) {
+        if (mounted && _scaffoldMessenger != null && _navigator != null) {
+          _scaffoldMessenger!.showSnackBar(
+            SnackBar(
+              content: const Text('Job posted successfully!'),
+              backgroundColor: mediumSeaGreen,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
             ),
-          ),
-        );
+          );
 
-        // Return to employer home with success
-        Navigator.pop(context, true);
+          // Return to employer home with success
+          _navigator!.pop(true);
+        }
       } else {
-        _showErrorDialog('Failed to post job. Please try again.');
+        if (mounted) {
+          _showErrorDialog('Failed to post job. Please try again.');
+        }
       }
     } catch (e) {
-      _showErrorDialog('An error occurred while posting the job.');
+      debugPrint('PostJobScreen error: $e');
+      if (mounted) {
+        _showErrorDialog('An error occurred while posting the job: ${e.toString()}');
+      }
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 

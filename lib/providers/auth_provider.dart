@@ -1,18 +1,24 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/auth_service.dart';
+import '../services/new_user_detection_service.dart';
 import '../main.dart';
 
 class AuthProvider extends ChangeNotifier {
   User? _user;
   bool _isLoading = false;
   String? _error;
+  bool _isNewUser = false;
+  bool _hasCompletedOnboarding = false;
 
   // Getters
   User? get user => _user;
   bool get isLoading => _isLoading;
   String? get error => _error;
   bool get isAuthenticated => _user != null;
+  bool get isNewUser => _isNewUser;
+  bool get hasCompletedOnboarding => _hasCompletedOnboarding;
+  bool get shouldShowOnboarding => _isNewUser && !_hasCompletedOnboarding;
 
   // Initialize auth state
   Future<void> initialize() async {
@@ -23,11 +29,18 @@ class AuthProvider extends ChangeNotifier {
       final currentUser = supabase.auth.currentUser;
       if (currentUser != null) {
         _user = currentUser;
+        await _checkUserStatus();
       }
       
       // Listen to auth state changes
-      supabase.auth.onAuthStateChange.listen((data) {
+      supabase.auth.onAuthStateChange.listen((data) async {
         _user = data.session?.user;
+        if (_user != null) {
+          await _checkUserStatus();
+        } else {
+          _isNewUser = false;
+          _hasCompletedOnboarding = false;
+        }
         notifyListeners();
       });
       
@@ -36,6 +49,23 @@ class AuthProvider extends ChangeNotifier {
     } finally {
       _isLoading = false;
       notifyListeners();
+    }
+  }
+
+  // Check user status (new user, onboarding completion)
+  Future<void> _checkUserStatus() async {
+    if (_user == null) return;
+    
+    try {
+      final status = await NewUserDetectionService.getOnboardingStatus(_user!.id);
+      _isNewUser = status['isNewUser'] ?? false;
+      _hasCompletedOnboarding = status['hasCompletedOnboarding'] ?? false;
+      
+      debugPrint('🔍 User status for ${_user!.id}: isNew=$_isNewUser, completed=$_hasCompletedOnboarding');
+    } catch (e) {
+      debugPrint('❌ Error checking user status: $e');
+      _isNewUser = false;
+      _hasCompletedOnboarding = false;
     }
   }
 
@@ -163,6 +193,28 @@ class AuthProvider extends ChangeNotifier {
   bool get isEmailVerified {
     if (_user == null) return false;
     return _user!.emailConfirmedAt != null;
+  }
+
+  // Mark onboarding as completed
+  Future<void> markOnboardingCompleted() async {
+    if (_user == null) return;
+    
+    try {
+      await NewUserDetectionService.markOnboardingCompleted(_user!.id);
+      _hasCompletedOnboarding = true;
+      _isNewUser = false;
+      notifyListeners();
+      
+      debugPrint('✅ Onboarding marked as completed for user: ${_user!.id}');
+    } catch (e) {
+      debugPrint('❌ Error marking onboarding as completed: $e');
+    }
+  }
+
+  // Refresh user status (useful after completing onboarding)
+  Future<void> refreshUserStatus() async {
+    await _checkUserStatus();
+    notifyListeners();
   }
 
   // Clear error

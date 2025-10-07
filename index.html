@@ -225,6 +225,9 @@
               Welcome to Hanapbuhay! Your account is now active and ready to
               use.
             </p>
+            <p style="font-size: 14px; color: #666; margin-top: 10px;">
+              If you registered as an employer, your application is now under review by our admin team.
+            </p>
           </div>
           <div class="instructions show">
             <h3>To continue using the app:</h3>
@@ -434,6 +437,8 @@
         hasRefreshToken: !!refreshToken,
         type: type,
         hasError: !!error,
+        codeLength: code ? code.length : 0,
+        urlSearch: window.location.search.substring(0, 100), // First 100 chars of URL params
       });
 
       async function handleVerification() {
@@ -472,60 +477,50 @@
             });
 
             try {
-              // Try verifyOtp first (for magic link/email verification)
-              const { data, error: verifyError } =
-                await supabase.auth.verifyOtp({
-                  token: code,
-                  type: "email",
+              // Use exchangeCodeForSession for email verification (recommended approach)
+              const { data: sessionData, error: exchangeError } =
+                await supabase.auth.exchangeCodeForSession(code);
+
+              if (exchangeError) {
+                secureLog("error", "exchangeCodeForSession failed", {
+                  errorCode: exchangeError.message,
+                  errorName: exchangeError.name,
                 });
-
-              if (verifyError) {
-                secureLog(
-                  "warn",
-                  "verifyOtp failed, trying exchangeCodeForSession",
-                  {
-                    errorCode: verifyError.message,
-                    errorName: verifyError.name,
-                  }
-                );
-
-                // If verifyOtp fails, try exchangeCodeForSession (for PKCE flow)
+                
+                // Try verifyOtp as fallback
                 try {
-                  const { data: sessionData, error: exchangeError } =
-                    await supabase.auth.exchangeCodeForSession(code);
-
-                  if (exchangeError) {
-                    secureLog("error", "Both verification methods failed", {
-                      verifyOtpError: verifyError.message,
-                      exchangeError: exchangeError.message,
+                  const { data, error: verifyError } =
+                    await supabase.auth.verifyOtp({
+                      token: code,
+                      type: "email",
                     });
-                    showError("Failed to verify your email. Please try again.");
+
+                  if (verifyError) {
+                    secureLog("error", "Both verification methods failed", {
+                      exchangeError: exchangeError.message,
+                      verifyOtpError: verifyError.message,
+                    });
+                    showError("Failed to verify your email. The verification code may be expired or invalid. Please request a new verification email.");
                     return;
                   }
 
-                  secureLog(
-                    "info",
-                    "Email verification successful via exchangeCodeForSession"
-                  );
+                  secureLog("info", "Email verification successful via verifyOtp fallback");
                   showSuccess();
 
                   // Try to open the app automatically after a short delay
                   setTimeout(() => {
                     tryOpenApp();
                   }, 2000);
-                } catch (exchangeException) {
-                  secureLog("error", "exchangeCodeForSession exception", {
-                    error: exchangeException.message,
+                } catch (verifyException) {
+                  secureLog("error", "verifyOtp fallback exception", {
+                    error: verifyException.message,
                   });
-                  showError("Failed to verify your email. Please try again.");
+                  showError("Failed to verify your email. Please request a new verification email.");
                   return;
                 }
               } else {
-                // verifyOtp succeeded
-                secureLog(
-                  "info",
-                  "Email verification successful via verifyOtp"
-                );
+                // exchangeCodeForSession succeeded
+                secureLog("info", "Email verification successful via exchangeCodeForSession");
                 showSuccess();
 
                 // Try to open the app automatically after a short delay
@@ -816,7 +811,34 @@
 
         const errorElement = document.getElementById("errorMessage");
         if (errorElement) {
-          errorElement.textContent = sanitizedMessage;
+          // Enhanced error display with troubleshooting info
+          errorElement.innerHTML = `
+            <div style="text-align: center; max-width: 500px; margin: 0 auto;">
+              <p style="color: #666; margin-bottom: 20px; font-size: 16px;">
+                ${sanitizedMessage}
+              </p>
+              
+              <div style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 12px; padding: 20px; margin: 20px 0; text-align: left;">
+                <h3 style="color: #013237; margin-bottom: 15px; font-size: 18px;">🔧 Troubleshooting Steps:</h3>
+                <ol style="margin: 0; padding-left: 20px; color: #495057; line-height: 1.8;">
+                  <li style="margin-bottom: 10px;">Make sure you clicked the verification link from your email</li>
+                  <li style="margin-bottom: 10px;">Check if the link has expired (verification links expire after 24 hours)</li>
+                  <li style="margin-bottom: 10px;">Try requesting a new verification email from the app</li>
+                  <li style="margin-bottom: 10px;">Make sure you're using the same email address you registered with</li>
+                </ol>
+              </div>
+
+              <div style="margin-top: 20px;">
+                <a href="io.supabase.hanapbuhay://" class="app-link" style="margin-right: 15px; margin-bottom: 10px;">
+                  📱 Open Hanapbuhay App
+                </a>
+                <br>
+                <a href="#" onclick="window.close()" style="color: #6c757d; text-decoration: underline; font-size: 14px; margin-top: 10px; display: inline-block;">
+                  Close This Page
+                </a>
+              </div>
+            </div>
+          `;
         }
 
         secureLog("warn", "Verification error displayed to user", {

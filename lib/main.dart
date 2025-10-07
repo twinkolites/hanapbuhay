@@ -7,7 +7,11 @@ import 'providers/auth_provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/applicant/home_screen.dart';
 import 'screens/employer/home_screen.dart';
+import 'screens/admin/admin_dashboard_screen.dart';
+import 'screens/applicant/job_preferences_screen.dart';
 import 'config/app_config.dart';
+import 'services/ai_screening_service.dart';
+import 'services/job_recommendation_service.dart';
 import 'dart:async';
 import 'package:flutter/services.dart';
 
@@ -31,6 +35,12 @@ Future<void> main() async {
     url: AppConfig.supabaseUrl,
     anonKey: AppConfig.supabaseAnonKey,
   );
+
+  // Initialize AI Screening Service
+  AIScreeningService.initialize();
+  
+  // Initialize Job Recommendation Service
+  JobRecommendationService.initialize();
 
   runApp(const MyApp());
 }
@@ -565,29 +575,63 @@ class _MyAppState extends State<MyApp> {
     });
   }
 
-  void _navigateToHomeScreen(BuildContext context) {
+  void _navigateToHomeScreen(BuildContext context) async {
+    // Add a small delay to prevent animation conflicts
+    await Future.delayed(const Duration(milliseconds: 100));
+    
+    // Check if widget is still mounted
+    if (!mounted) return;
+    
     // Get user role and navigate accordingly
     final user = supabase.auth.currentUser;
     if (user != null) {
       final role = user.userMetadata?['role'] as String? ?? 'applicant';
 
-      if (role == 'employer') {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const EmployerHomeScreen()),
-        );
+      if (role == 'admin') {
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const AdminDashboardScreen()),
+          );
+        }
+      } else if (role == 'employer') {
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const EmployerHomeScreen()),
+          );
+        }
       } else {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const HomeScreen()),
-        );
+        // Check if user needs onboarding
+        final authProvider = Provider.of<AuthProvider>(context, listen: false);
+        await authProvider.refreshUserStatus();
+        
+        if (mounted) {
+          if (authProvider.shouldShowOnboarding) {
+            // Navigate to onboarding for new users
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const OnboardingWrapper(),
+              ),
+            );
+          } else {
+            // Navigate to home screen for existing users
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (context) => const HomeScreen()),
+            );
+          }
+        }
       }
     } else {
       // Fallback to login screen
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const LoginScreen()),
-      );
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const LoginScreen()),
+        );
+      }
     }
   }
 
@@ -827,6 +871,283 @@ class WelcomeScreen extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Onboarding wrapper that handles the new user flow
+class OnboardingWrapper extends StatefulWidget {
+  const OnboardingWrapper({super.key});
+
+  @override
+  State<OnboardingWrapper> createState() => _OnboardingWrapperState();
+}
+
+class _OnboardingWrapperState extends State<OnboardingWrapper> {
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AuthProvider>(
+      builder: (context, authProvider, child) {
+        // Show loading while checking user status
+        if (authProvider.isLoading) {
+          return const Scaffold(
+            backgroundColor: Color(0xFFEAF9E7),
+            body: Center(
+              child: CircularProgressIndicator(
+                color: Color(0xFF4CA771),
+              ),
+            ),
+          );
+        }
+
+        // If user has completed onboarding, go to home screen
+        if (authProvider.hasCompletedOnboarding) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (context) => const HomeScreen()),
+            );
+          });
+          return const Scaffold(
+            backgroundColor: Color(0xFFEAF9E7),
+            body: Center(
+              child: CircularProgressIndicator(
+                color: Color(0xFF4CA771),
+              ),
+            ),
+          );
+        }
+
+        // Show onboarding screen for new users
+        return const OnboardingScreen();
+      },
+    );
+  }
+}
+
+/// Onboarding screen that guides new users through job preference setup
+class OnboardingScreen extends StatefulWidget {
+  const OnboardingScreen({super.key});
+
+  @override
+  State<OnboardingScreen> createState() => _OnboardingScreenState();
+}
+
+class _OnboardingScreenState extends State<OnboardingScreen> {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFEAF9E7),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            children: [
+              const Spacer(),
+              
+              // Welcome message
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF013237).withValues(alpha: 0.1),
+                      blurRadius: 20,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    // AI icon
+                    Container(
+                      width: 80,
+                      height: 80,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF4CA771), Color(0xFF013237)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Icon(
+                        Icons.psychology,
+                        color: Colors.white,
+                        size: 40,
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 24),
+                    
+                    Text(
+                      'Welcome to HanapBuhay!',
+                      style: TextStyle(
+                        color: const Color(0xFF013237),
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    
+                    const SizedBox(height: 16),
+                    
+                    Text(
+                      'Let\'s personalize your job search experience by setting up your preferences. Our AI will use this information to recommend the best jobs for you.',
+                      style: TextStyle(
+                        color: const Color(0xFF013237).withValues(alpha: 0.7),
+                        fontSize: 16,
+                        height: 1.5,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    
+                    const SizedBox(height: 24),
+                    
+                    // Features list
+                    Column(
+                      children: [
+                        _buildFeatureItem(
+                          icon: Icons.work_outline,
+                          text: 'Personalized job recommendations',
+                        ),
+                        const SizedBox(height: 12),
+                        _buildFeatureItem(
+                          icon: Icons.trending_up,
+                          text: 'Career growth opportunities',
+                        ),
+                        const SizedBox(height: 12),
+                        _buildFeatureItem(
+                          icon: Icons.location_on,
+                          text: 'Location-based matching',
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              
+              const Spacer(),
+              
+              // Action buttons
+              Column(
+                children: [
+                  // Start onboarding button
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        final result = await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const JobPreferencesScreen(),
+                          ),
+                        );
+                        
+                        if (result == true) {
+                          // Mark onboarding as completed
+                          final authProvider = Provider.of<AuthProvider>(context, listen: false);
+                          await authProvider.markOnboardingCompleted();
+                          
+                          // Navigate to home screen
+                          Navigator.pushReplacement(
+                            context,
+                            MaterialPageRoute(builder: (context) => const HomeScreen()),
+                          );
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF4CA771),
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            'Set Up My Preferences',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          SizedBox(width: 8),
+                          Icon(Icons.arrow_forward, size: 20),
+                        ],
+                      ),
+                    ),
+                  ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  // Skip button
+                  TextButton(
+                    onPressed: () async {
+                      // Mark onboarding as completed even if skipped
+                      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+                      await authProvider.markOnboardingCompleted();
+                      
+                      // Navigate to home screen
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(builder: (context) => const HomeScreen()),
+                      );
+                    },
+                    child: Text(
+                      'Skip for now',
+                      style: TextStyle(
+                        color: const Color(0xFF013237).withValues(alpha: 0.6),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFeatureItem({
+    required IconData icon,
+    required String text,
+  }) {
+    return Row(
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: const Color(0xFF4CA771).withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(
+            icon,
+            color: const Color(0xFF4CA771),
+            size: 18,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              color: const Color(0xFF013237).withValues(alpha: 0.8),
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../screens/applicant/apply_job_screen.dart';
 
-class JobCardWidget extends StatelessWidget {
+class JobCardWidget extends StatefulWidget {
   final Map<String, dynamic> job;
   final VoidCallback? onBookmarkTap;
   final VoidCallback? onApplyTap;
@@ -13,11 +14,64 @@ class JobCardWidget extends StatelessWidget {
     this.onApplyTap,
   });
 
+  @override
+  State<JobCardWidget> createState() => _JobCardWidgetState();
+}
+
+class _JobCardWidgetState extends State<JobCardWidget> {
+  bool _hasApplied = false;
+  String? _applicationStatus;
+  bool _isCheckingApplication = true;
+  final SupabaseClient _supabase = Supabase.instance.client;
+
   // Color palette
   static const Color lightMint = Color(0xFFEAF9E7);
   static const Color paleGreen = Color(0xFFC0E6BA);
   static const Color mediumSeaGreen = Color(0xFF4CA771);
   static const Color darkTeal = Color(0xFF013237);
+
+  @override
+  void initState() {
+    super.initState();
+    _checkApplicationStatus();
+  }
+
+  Future<void> _checkApplicationStatus() async {
+    final user = _supabase.auth.currentUser;
+    if (user != null) {
+      try {
+        // Get application details including status
+        final response = await _supabase
+            .from('job_applications')
+            .select('status')
+            .eq('job_id', widget.job['id'])
+            .eq('applicant_id', user.id)
+            .maybeSingle();
+
+        if (mounted) {
+          setState(() {
+            _hasApplied = response != null;
+            _applicationStatus = response?['status'];
+            _isCheckingApplication = false;
+          });
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _hasApplied = false;
+            _applicationStatus = null;
+            _isCheckingApplication = false;
+          });
+        }
+      }
+    } else {
+      setState(() {
+        _hasApplied = false;
+        _applicationStatus = null;
+        _isCheckingApplication = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -61,7 +115,7 @@ class JobCardWidget extends StatelessWidget {
                 ),
                 child: Center(
                   child: Text(
-                    (job['companies']?['name'] ?? 'Company').substring(0, 1),
+                    (widget.job['companies']?['name'] ?? 'Company').substring(0, 1),
                     style: TextStyle(
                       color: mediumSeaGreen,
                       fontSize: 18,
@@ -79,7 +133,7 @@ class JobCardWidget extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      job['title'] ?? 'Untitled Job',
+                      widget.job['title'] ?? 'Untitled Job',
                       style: const TextStyle(
                         color: darkTeal,
                         fontSize: 16,
@@ -90,7 +144,7 @@ class JobCardWidget extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      job['companies']?['name'] ?? 'Company',
+                      widget.job['companies']?['name'] ?? 'Company',
                       style: TextStyle(
                         color: darkTeal.withValues(alpha: 0.7),
                         fontSize: 14,
@@ -103,7 +157,7 @@ class JobCardWidget extends StatelessWidget {
               
               // Bookmark button
               GestureDetector(
-                onTap: onBookmarkTap,
+                onTap: widget.onBookmarkTap,
                 child: Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
@@ -131,8 +185,8 @@ class JobCardWidget extends StatelessWidget {
                 size: 16,
               ),
               const SizedBox(width: 4),
-              Text(
-                job['location'] ?? 'Location not specified',
+                    Text(
+                      widget.job['location'] ?? 'Location not specified',
                 style: TextStyle(
                   color: darkTeal.withValues(alpha: 0.7),
                   fontSize: 14,
@@ -140,7 +194,7 @@ class JobCardWidget extends StatelessWidget {
               ),
               const Spacer(),
               Text(
-                _formatSalaryRange(job['salary_min'], job['salary_max']),
+                      _formatSalaryRange(widget.job['salary_min'], widget.job['salary_max']),
                 style: const TextStyle(
                   color: mediumSeaGreen,
                   fontSize: 14,
@@ -170,7 +224,7 @@ class JobCardWidget extends StatelessWidget {
                   ),
                 ),
                 child: Text(
-                  _formatJobTypeDisplay(job['type'] ?? 'full_time'),
+                  _formatJobTypeDisplay(widget.job['type'] ?? 'full_time'),
                   style: TextStyle(
                     color: mediumSeaGreen,
                     fontSize: 12,
@@ -178,7 +232,7 @@ class JobCardWidget extends StatelessWidget {
                   ),
                 ),
               ),
-              if (job['experience_level'] != null)
+              if (widget.job['experience_level'] != null)
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 12,
@@ -193,7 +247,7 @@ class JobCardWidget extends StatelessWidget {
                     ),
                   ),
                   child: Text(
-                    _formatExperienceDisplay(job['experience_level']),
+                    _formatExperienceDisplay(widget.job['experience_level']),
                     style: TextStyle(
                       color: paleGreen,
                       fontSize: 12,
@@ -206,30 +260,62 @@ class JobCardWidget extends StatelessWidget {
           
           const SizedBox(height: 16),
           
-          // Apply button
+          // Apply button with application status
           SizedBox(
             width: double.infinity,
-            child: ElevatedButton(
-              onPressed: onApplyTap ?? () => _navigateToApplyJob(context),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: mediumSeaGreen,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text(
-                'Apply Now',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
+            child: _buildApplyButton(),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildApplyButton() {
+    if (_isCheckingApplication) {
+      return Container(
+        height: 48,
+        decoration: BoxDecoration(
+          color: mediumSeaGreen.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: mediumSeaGreen.withValues(alpha: 0.3),
+            width: 1,
+          ),
+        ),
+        child: const Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(mediumSeaGreen),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (_hasApplied && _applicationStatus != null) {
+      return _buildApplicationStatusButton();
+    }
+
+    return ElevatedButton(
+      onPressed: widget.onApplyTap ?? () => _navigateToApplyJob(context),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: mediumSeaGreen,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+      child: const Text(
+        'Apply Now',
+        style: TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }
@@ -238,13 +324,13 @@ class JobCardWidget extends StatelessWidget {
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => ApplyJobScreen(job: job),
+        builder: (context) => ApplyJobScreen(job: widget.job),
       ),
     );
     
-    // You can handle the result here if needed
+    // Refresh application status after applying
     if (result == true) {
-      // Application was successful
+      _checkApplicationStatus();
     }
   }
 
@@ -266,6 +352,125 @@ class JobCardWidget extends StatelessWidget {
       return '${(number / 1000).toStringAsFixed(0)}K';
     }
     return number.toString();
+  }
+
+  Widget _buildApplicationStatusButton() {
+    final status = _applicationStatus!;
+    final statusColor = _getStatusColor(status);
+    final statusIcon = _getStatusIcon(status);
+    final statusText = _getStatusDisplayText(status);
+
+    return Container(
+      height: 48,
+      decoration: BoxDecoration(
+        color: statusColor.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: statusColor.withValues(alpha: 0.3),
+          width: 1,
+        ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => _navigateToApplicationDetails(),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                statusIcon,
+                color: statusColor,
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                statusText,
+                style: TextStyle(
+                  color: statusColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(
+                Icons.arrow_forward_ios,
+                color: statusColor.withValues(alpha: 0.7),
+                size: 12,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _navigateToApplicationDetails() {
+    // Navigate to application details screen
+    // This would show the full application timeline and details
+    Navigator.pushNamed(context, '/application-details', arguments: {
+      'job': widget.job,
+      'status': _applicationStatus,
+    });
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'applied':
+        return mediumSeaGreen; // Green - Successfully applied
+      case 'under_review':
+        return Colors.orange; // Orange - In progress
+      case 'shortlisted':
+        return Colors.blue; // Blue - Under consideration
+      case 'interview':
+        return Colors.purple; // Purple - Interview stage
+      case 'hired':
+        return Colors.green; // Green - Success!
+      case 'rejected':
+        return Colors.red; // Red - Declined
+      default:
+        return darkTeal;
+    }
+  }
+
+  IconData _getStatusIcon(String status) {
+    switch (status) {
+      case 'applied':
+        return Icons.check_circle;
+      case 'under_review':
+        return Icons.hourglass_empty;
+      case 'shortlisted':
+        return Icons.star;
+      case 'interview':
+        return Icons.calendar_today;
+      case 'hired':
+        return Icons.celebration;
+      case 'rejected':
+        return Icons.cancel;
+      default:
+        return Icons.info;
+    }
+  }
+
+  String _getStatusDisplayText(String status) {
+    switch (status) {
+      case 'applied':
+        return 'Applied';
+      case 'under_review':
+        return 'Under Review';
+      case 'shortlisted':
+        return 'Shortlisted';
+      case 'interview':
+        return 'Interview';
+      case 'hired':
+        return 'Hired!';
+      case 'rejected':
+        return 'Not Selected';
+      default:
+        return status.split('_').map((word) => 
+          word[0].toUpperCase() + word.substring(1)
+        ).join(' ');
+    }
   }
 
   String _formatJobTypeDisplay(String type) {

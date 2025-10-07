@@ -6,7 +6,8 @@ import 'post_job_screen.dart';
 import 'edit_job_screen.dart';
 import 'profile_screen.dart';
 import 'applications_screen.dart';
-import 'chat_screen.dart';
+import 'applications_overview_screen.dart';
+import 'chat_list_screen.dart';
 
 class EmployerHomeScreen extends StatefulWidget {
   const EmployerHomeScreen({super.key});
@@ -28,6 +29,10 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
+  
+  // Safe references to inherited widgets
+  ScaffoldMessengerState? _scaffoldMessenger;
+  NavigatorState? _navigator;
 
   // Color palette
   static const Color lightMint = Color(0xFFEAF9E7);
@@ -62,9 +67,22 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Safely capture references to inherited widgets
+    _scaffoldMessenger = ScaffoldMessenger.maybeOf(context);
+    _navigator = Navigator.maybeOf(context);
+  }
+
+  @override
   void dispose() {
     _animationController.dispose();
     _undoTimer?.cancel();
+    
+    // Clear references to inherited widgets
+    _scaffoldMessenger = null;
+    _navigator = null;
+    
     super.dispose();
   }
 
@@ -90,17 +108,21 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
       }
     }
     
-    setState(() {
-      _isLoading = false;
-    });
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
 
   Future<void> _loadJobs() async {
     if (_company != null) {
       final jobs = await JobService.getJobsByCompany(_company!['id']);
-      setState(() {
-        _jobs = jobs;
-      });
+      if (mounted) {
+        setState(() {
+          _jobs = jobs;
+        });
+      }
     }
   }
 
@@ -113,17 +135,18 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
         final applications = await JobService.getJobApplications(job['id']);
         totalApplications += applications.length;
       }
-      setState(() {
-        _totalApplications = totalApplications;
-      });
+      if (mounted) {
+        setState(() {
+          _totalApplications = totalApplications;
+        });
+      }
     }
   }
 
 
   void _navigateToPostJob() async {
-    if (_company != null) {
-      final result = await Navigator.push(
-        context,
+    if (_company != null && _navigator != null) {
+      final result = await _navigator!.push(
         MaterialPageRoute(
           builder: (context) => PostJobScreen(company: _company!),
         ),
@@ -235,12 +258,13 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
                   _buildActionButton(
                     icon: Icons.person,
                     onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const EmployerProfileScreen(),
-                        ),
-                      );
+                      if (_navigator != null) {
+                        _navigator!.push(
+                          MaterialPageRoute(
+                            builder: (context) => const EmployerProfileScreen(),
+                          ),
+                        );
+                      }
                     },
                   ),
                 ],
@@ -609,12 +633,13 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => ApplicationsScreen(job: job),
-                      ),
-                    );
+                    if (_navigator != null) {
+                      _navigator!.push(
+                        MaterialPageRoute(
+                          builder: (context) => ApplicationsScreen(job: job),
+                        ),
+                      );
+                    }
                   },
                   icon: const Icon(Icons.people_outline, size: 14),
                   label: const Text('View Applications', 
@@ -678,16 +703,17 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
   }
 
   void _navigateToEditJob(Map<String, dynamic> job) async {
-    final result = await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => EditJobScreen(job: job),
-      ),
-    );
-    
-    if (result == true) {
-      await _loadJobs();
-      await _loadApplicationsCount();
+    if (_navigator != null) {
+      final result = await _navigator!.push(
+        MaterialPageRoute(
+          builder: (context) => EditJobScreen(job: job),
+        ),
+      );
+      
+      if (result == true) {
+        await _loadJobs();
+        await _loadApplicationsCount();
+      }
     }
   }
 
@@ -739,13 +765,15 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
     _deletedJob = Map<String, dynamic>.from(job);
     
     // Remove job from UI immediately for better UX
-    setState(() {
-      _jobs.removeWhere((j) => j['id'] == job['id']);
-    });
+    if (mounted) {
+      setState(() {
+        _jobs.removeWhere((j) => j['id'] == job['id']);
+      });
+    }
     
     // Show undo snackbar
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+    if (mounted && _scaffoldMessenger != null) {
+      _scaffoldMessenger!.showSnackBar(
         SnackBar(
           content: Row(
             children: [
@@ -804,13 +832,15 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
       _undoTimer?.cancel();
       
       // Restore the job to the list
-      setState(() {
-        _jobs.add(_deletedJob!);
-        // Sort by creation date to maintain order
-        _jobs.sort((a, b) => 
-          DateTime.parse(b['created_at']).compareTo(DateTime.parse(a['created_at']))
-        );
-      });
+      if (mounted) {
+        setState(() {
+          _jobs.add(_deletedJob!);
+          // Sort by creation date to maintain order
+          _jobs.sort((a, b) => 
+            DateTime.parse(b['created_at']).compareTo(DateTime.parse(a['created_at']))
+          );
+        });
+      }
       
       // Update applications count
       _loadApplicationsCount();
@@ -819,8 +849,8 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
       _deletedJob = null;
       
       // Show success message
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+      if (mounted && _scaffoldMessenger != null) {
+        _scaffoldMessenger!.showSnackBar(
           SnackBar(
             content: Row(
               children: [
@@ -857,8 +887,8 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
       final success = await JobService.archiveJob(jobId);
       if (success) {
         await _loadApplicationsCount();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+        if (mounted && _scaffoldMessenger != null) {
+          _scaffoldMessenger!.showSnackBar(
             SnackBar(
               content: const Text('Job permanently deleted', style: TextStyle(fontSize: 11)),
               backgroundColor: Colors.grey.shade600,
@@ -873,9 +903,9 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
       }
     } catch (e) {
       // If permanent deletion fails, we should restore the job
-      if (_deletedJob != null && mounted) {
+      if (_deletedJob != null && mounted && _scaffoldMessenger != null) {
         _undoDeleteJob();
-        ScaffoldMessenger.of(context).showSnackBar(
+        _scaffoldMessenger!.showSnackBar(
           SnackBar(
             content: const Text('Failed to delete job. Job has been restored.', style: TextStyle(fontSize: 11)),
             backgroundColor: Colors.orange.shade600,
@@ -922,39 +952,54 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
     
     return GestureDetector(
       onTap: () {
-        setState(() {
-          _currentIndex = index;
-        });
+        if (mounted) {
+          setState(() {
+            _currentIndex = index;
+          });
+        }
         
         // Handle navigation based on index
-        if (index == 1) {
+        if (index == 1 && _navigator != null) {
           // Navigate to messages
-          Navigator.push(
-            context,
+          _navigator!.push(
             MaterialPageRoute(
-              builder: (context) => const EmployerChatScreen(),
+              builder: (context) => const EmployerChatListScreen(),
             ),
           ).then((_) {
-            // Reset to home tab after returning from messages
-            setState(() {
-              _currentIndex = 0;
-            });
+        // Reset to home tab after returning from messages
+        if (mounted) {
+          setState(() {
+            _currentIndex = 0;
           });
-        } else if (index == 2) {
+        }
+          });
+        } else if (index == 2 && _navigator != null) {
           // Navigate to applications overview
-          _navigateToApplicationsOverview();
-        } else if (index == 3) {
+          _navigator!.push(
+            MaterialPageRoute(
+              builder: (context) => const ApplicationsOverviewScreen(),
+            ),
+          ).then((_) {
+            // Reset to home tab after returning from applications
+            if (mounted) {
+              setState(() {
+                _currentIndex = 0;
+              });
+            }
+          });
+        } else if (index == 3 && _navigator != null) {
           // Navigate to profile
-          Navigator.push(
-            context,
+          _navigator!.push(
             MaterialPageRoute(
               builder: (context) => const EmployerProfileScreen(),
             ),
           ).then((_) {
             // Reset to home tab after returning from profile
-            setState(() {
-              _currentIndex = 0;
-            });
+            if (mounted) {
+              setState(() {
+                _currentIndex = 0;
+              });
+            }
           });
         }
       },
@@ -987,203 +1032,5 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
     );
   }
 
-  void _navigateToApplicationsOverview() {
-    // Show a dialog with all applications from all jobs
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Container(
-          width: MediaQuery.of(context).size.width * 0.9,
-          height: MediaQuery.of(context).size.height * 0.7,
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'All Applications',
-                    style: TextStyle(
-                      color: darkTeal,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close),
-                    color: darkTeal.withValues(alpha: 0.7),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Expanded(
-                child: _jobs.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.people_outline,
-                              size: 60,
-                              color: darkTeal.withValues(alpha: 0.3),
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              'No Applications Yet',
-                              style: TextStyle(
-                                color: darkTeal.withValues(alpha: 0.7),
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Applications will appear here once you post jobs',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: darkTeal.withValues(alpha: 0.5),
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    : ListView.builder(
-                        itemCount: _jobs.length,
-                        itemBuilder: (context, index) {
-                          final job = _jobs[index];
-                          return FutureBuilder<List<Map<String, dynamic>>>(
-                            future: JobService.getJobApplications(job['id']),
-                            builder: (context, snapshot) {
-                              if (snapshot.connectionState == ConnectionState.waiting) {
-                                return const Padding(
-                                  padding: EdgeInsets.all(8.0),
-                                  child: Center(
-                                    child: SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: mediumSeaGreen,
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              }
-                              
-                              final applications = snapshot.data ?? [];
-                              if (applications.isEmpty) {
-                                return const SizedBox.shrink();
-                              }
-                              
-                              return Container(
-                                margin: const EdgeInsets.only(bottom: 12),
-                                child: ExpansionTile(
-                                  title: Text(
-                                    job['title'] ?? 'Untitled Job',
-                                    style: const TextStyle(
-                                      color: darkTeal,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  subtitle: Text(
-                                    '${applications.length} application${applications.length == 1 ? '' : 's'}',
-                                    style: TextStyle(
-                                      color: mediumSeaGreen,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                  children: applications.map((application) {
-                                    final profiles = application['profiles'];
-                                    final applicantName = _getApplicantName(application);
-                                    
-                                    return ListTile(
-                                      leading: CircleAvatar(
-                                        backgroundColor: mediumSeaGreen.withValues(alpha: 0.1),
-                                        child: Text(
-                                          applicantName.isNotEmpty ? applicantName[0].toUpperCase() : '?',
-                                          style: const TextStyle(
-                                            color: mediumSeaGreen,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ),
-                                      title: Text(
-                                        applicantName,
-                                        style: const TextStyle(
-                                          color: darkTeal,
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                      subtitle: Text(
-                                        profiles?['email'] ?? '',
-                                        style: TextStyle(
-                                          color: darkTeal.withValues(alpha: 0.7),
-                                          fontSize: 11,
-                                        ),
-                                      ),
-                                      trailing: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 4,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: mediumSeaGreen.withValues(alpha: 0.1),
-                                          borderRadius: BorderRadius.circular(8),
-                                        ),
-                                        child: Text(
-                                          application['status'] ?? 'applied',
-                                          style: const TextStyle(
-                                            color: mediumSeaGreen,
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ),
-                                      onTap: () {
-                                        Navigator.pop(context);
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (context) => ApplicationsScreen(job: job),
-                                          ),
-                                        );
-                                      },
-                                    );
-                                  }).toList(),
-                                ),
-                              );
-                            },
-                          );
-                        },
-                      ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 
-  String _getApplicantName(Map<String, dynamic> application) {
-    final profiles = application['profiles'];
-    if (profiles == null) return 'Unknown Applicant';
-    
-    final firstName = profiles['first_name']?.toString().trim() ?? '';
-    final lastName = profiles['last_name']?.toString().trim() ?? '';
-    
-    if (firstName.isEmpty && lastName.isEmpty) {
-      return 'Unknown Applicant';
-    }
-    
-    return '$firstName $lastName'.trim();
-  }
 }

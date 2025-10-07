@@ -43,6 +43,13 @@ dependencies:
   app_links: ^6.3.2
   flutter_dotenv: ^5.1.0
   url_launcher: ^6.3.2
+  google_generative_ai: ^0.4.7
+  syncfusion_flutter_pdf: ^26.2.14
+  file_picker: ^8.0.0+1
+  # Calendar and Video Calling Dependencies
+  syncfusion_flutter_calendar: ^26.2.14
+  zego_uikit_prebuilt_call: ^3.8.4
+  table_calendar: ^3.1.2
 
 dev_dependencies:
   flutter_test:
