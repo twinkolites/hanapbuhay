@@ -221,9 +221,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         } catch (e) {
           print('❌ Error verifying token hash: $e');
           _handleVerificationError(e, registrationType);
-          return; // Prevent duplicate processing
         }
-        return; // Prevent falling through
       } else if (accessToken != null && refreshToken != null) {
         // Direct token handling (already authenticated)
         print('🔗 Access tokens detected - handling authentication');
@@ -283,6 +281,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   // Show expired link dialog
   void _showExpiredLinkDialog(BuildContext context, String? registrationType) {
+    // Only show dialog if no other dialog is currently open
+    if (ModalRoute.of(context)?.isCurrent == true && ModalRoute.of(context) is PopupRoute) {
+      return;
+    }
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -874,6 +876,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   void _showEmailConfirmationError(BuildContext context, String error) {
+    // Only show dialog if no other dialog is currently open
+    if (ModalRoute.of(context)?.isCurrent == true && ModalRoute.of(context) is PopupRoute) {
+      return;
+    }
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -951,6 +957,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final context = _navigatorKey.currentContext;
       if (context != null) {
+        // Only show dialog if no other dialog is currently open
+        if (ModalRoute.of(context)?.isCurrent == true && ModalRoute.of(context) is PopupRoute) {
+          return;
+        }
         showDialog(
           context: context,
           barrierDismissible: false,
