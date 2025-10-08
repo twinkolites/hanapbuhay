@@ -337,6 +337,7 @@
       const errorCode = urlParams.get("error_code");
       const errorDescription = urlParams.get("error_description");
       const emailFromUrl = urlParams.get("email");
+      const registrationType = urlParams.get("registration_type");
 
       // A user entity in Supabase can be linked by multiple identifiers. For web-only verification we expect either the email address passed via query string or a valid session.
       const emailIdentifier = emailFromUrl ? sanitizeString(emailFromUrl) : null;
@@ -349,7 +350,8 @@
         hasRefreshToken: !!refreshToken,
         hasError: !!error,
         errorCode: errorCode,
-        hasEmail: !!emailIdentifier
+        hasEmail: !!emailIdentifier,
+        registrationType: registrationType
       });
 
       async function handleVerification() {
@@ -570,27 +572,28 @@
           return;
         }
 
-        // Get registration type and other parameters from URL
-        const urlParams = new URLSearchParams(window.location.search);
-        const registrationType = urlParams.get('registration_type');
-        const tokenHash = urlParams.get('token_hash');
-        const type = urlParams.get('type');
-        const email = urlParams.get('email');
-        
+        // Use the global variables that were extracted from URL parameters
+        log("info", "Attempting to open mobile app", { 
+          registrationType, 
+          tokenHash: token_hash?.substring(0, 8) + '...', 
+          type,
+          email: emailFromUrl?.substring(0, 8) + '...'
+        });
+
         // Build app URL with parameters using proper callback URL
         let appUrl = "io.supabase.hanapbuhay://login-callback";
         const params = new URLSearchParams();
         
         if (registrationType) params.set('registration_type', registrationType);
-        if (tokenHash) params.set('token_hash', tokenHash);
+        if (token_hash) params.set('token_hash', token_hash);
         if (type) params.set('type', type);
-        if (email) params.set('email', email);
+        if (emailFromUrl) params.set('email', emailFromUrl);
         
         if (params.toString()) {
           appUrl += '?' + params.toString();
         }
         
-        log("info", "Attempting to open mobile app", { registrationType, tokenHash: tokenHash?.substring(0, 8) + '...', type });
+        log("info", "Final app URL", { appUrl: appUrl.substring(0, 50) + '...' });
 
         // Clear any existing timers
         if (window.appOpenTimer) {
