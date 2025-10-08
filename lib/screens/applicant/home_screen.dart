@@ -68,6 +68,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _animationController.forward();
     
     _initializeApplicantData();
+    
+    // Show login success toast
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _showLoginSuccessToast();
+    });
   }
 
   @override
@@ -245,6 +250,42 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _animationController.dispose();
     super.dispose();
   }
+
+  // Show login success toast
+  void _showLoginSuccessToast() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(
+              Icons.check_circle,
+              color: Colors.white,
+              size: 20,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Login successful! Welcome back, ${_displayName ?? 'User'}!',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: mediumSeaGreen,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+        duration: const Duration(seconds: 3),
+        margin: const EdgeInsets.all(16),
+      ),
+    );
+  }
+
 
   @override
   Widget build(BuildContext context) {

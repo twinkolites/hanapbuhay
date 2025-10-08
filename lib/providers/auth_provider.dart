@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/auth_service.dart';
 import '../services/new_user_detection_service.dart';
+import '../services/stay_signed_in_service.dart';
 import '../main.dart';
 
 class AuthProvider extends ChangeNotifier {
@@ -26,10 +27,19 @@ class AuthProvider extends ChangeNotifier {
       _isLoading = true;
       notifyListeners();
       
-      final currentUser = supabase.auth.currentUser;
-      if (currentUser != null) {
-        _user = currentUser;
-        await _checkUserStatus();
+      // Use the StaySignedInService to validate session
+      final hasValidSession = await StaySignedInService.validateSessionOnStartup();
+      
+      if (hasValidSession) {
+        final currentUser = supabase.auth.currentUser;
+        if (currentUser != null) {
+          _user = currentUser;
+          await _checkUserStatus();
+        }
+      } else {
+        _user = null;
+        _isNewUser = false;
+        _hasCompletedOnboarding = false;
       }
       
       // Listen to auth state changes
@@ -89,6 +99,10 @@ class AuthProvider extends ChangeNotifier {
       notifyListeners();
 
       await AuthService.signInWithEmail(email: email, password: password);
+      
+      // Mark session as valid after successful login (respects user preference)
+      await StaySignedInService.markSessionAsValid();
+      
       return true;
       
     } on AuthException catch (e) {
@@ -167,6 +181,10 @@ class AuthProvider extends ChangeNotifier {
       notifyListeners();
       
       await supabase.auth.signOut();
+      
+      // Clear all session data and preferences
+      await StaySignedInService.clearSessionData();
+      
       _user = null;
       
     } catch (e) {

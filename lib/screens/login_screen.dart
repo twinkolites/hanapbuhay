@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../providers/auth_provider.dart';
+import '../services/stay_signed_in_service.dart';
 import '../main.dart';
 import 'register_screen.dart';
 import 'forgot_password_screen.dart';
@@ -104,8 +104,8 @@ class _LoginScreenState extends State<LoginScreen>
 
     _animationController.forward();
 
-    // Check for existing session (Stay Signed In functionality)
-    _checkExistingSession();
+    // Load stay signed in preference and check session
+    _initializeSession();
   }
 
   @override
@@ -116,42 +116,33 @@ class _LoginScreenState extends State<LoginScreen>
     super.dispose();
   }
 
-  // Check for existing session (Stay Signed In functionality)
-  Future<void> _checkExistingSession() async {
+  // Initialize session and load preferences
+  Future<void> _initializeSession() async {
     try {
-      // Only check for existing session if stay signed in is enabled
-      if (!_staySignedIn) {
-        // If stay signed in is disabled, sign out any existing session
-        await supabase.auth.signOut();
+      // Load stay signed in preference
+      final shouldStaySignedIn = await StaySignedInService.shouldStaySignedIn();
+      if (mounted) {
+        setState(() {
+          _staySignedIn = shouldStaySignedIn;
+        });
+      }
+      
+      // Check if we have a valid session based on user preference
+      final hasValidSession = await StaySignedInService.validateSessionOnStartup();
+      
+      if (hasValidSession) {
+        // User has a valid session and wants to stay signed in
+        await _checkUserRoleAndNavigate();
+      } else {
+        // No valid session, user needs to log in
         if (mounted) {
           setState(() {
             _isCheckingSession = false;
           });
         }
-        return;
-      }
-
-      // Get current session
-      final session = supabase.auth.currentSession;
-
-      if (session != null) {
-        // Check if session is still valid
-        if (session.isExpired) {
-          // Try to refresh the session
-          final refreshedSession = await _refreshSession();
-          if (refreshedSession != null) {
-            await _checkUserRoleAndNavigate();
-            return;
-          }
-        } else {
-          // Session is valid, navigate to appropriate screen
-          await _checkUserRoleAndNavigate();
-          return;
-        }
       }
     } catch (e) {
-      print('Session check error: $e');
-    } finally {
+      print('Session initialization error: $e');
       if (mounted) {
         setState(() {
           _isCheckingSession = false;
@@ -160,16 +151,6 @@ class _LoginScreenState extends State<LoginScreen>
     }
   }
 
-  // Refresh session if expired
-  Future<Session?> _refreshSession() async {
-    try {
-      final response = await supabase.auth.refreshSession();
-      return response.session;
-    } catch (e) {
-      print('Session refresh error: $e');
-      return null;
-    }
-  }
 
   void _showErrorDialog(String message) {
     showDialog(
@@ -243,13 +224,6 @@ class _LoginScreenState extends State<LoginScreen>
         final user = supabase.auth.currentUser;
         if (user != null && user.emailConfirmedAt == null) {
           _showEmailNotVerifiedDialog();
-          return;
-        }
-
-        // If stay signed in is disabled, sign out after successful login
-        if (!_staySignedIn) {
-          await supabase.auth.signOut();
-          _showErrorDialog('Stay signed in is disabled. Please enable it to maintain your session.');
           return;
         }
 
@@ -925,10 +899,19 @@ class _LoginScreenState extends State<LoginScreen>
               activeColor: mediumSeaGreen,
               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
-              onChanged: (value) {
+              onChanged: (value) async {
                 setState(() {
-                  _staySignedIn = value ?? true;
+                  _staySignedIn = value ?? false;
                 });
+                
+                // Save the preference using the service
+                await StaySignedInService.saveStaySignedInPreference(_staySignedIn);
+                
+                // If user unchecks "Stay Signed In", immediately sign out
+                if (!_staySignedIn) {
+                  await supabase.auth.signOut();
+                  await StaySignedInService.clearSessionData();
+                }
               },
             ),
             const SizedBox(width: 6),

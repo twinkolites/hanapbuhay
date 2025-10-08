@@ -577,8 +577,8 @@
         const type = urlParams.get('type');
         const email = urlParams.get('email');
         
-        // Build app URL with parameters
-        let appUrl = "io.supabase.hanapbuhay://";
+        // Build app URL with parameters using proper callback URL
+        let appUrl = "io.supabase.hanapbuhay://login-callback";
         const params = new URLSearchParams();
         
         if (registrationType) params.set('registration_type', registrationType);

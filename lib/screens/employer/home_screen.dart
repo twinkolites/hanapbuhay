@@ -64,6 +64,11 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
     _animationController.forward();
     
     _initializeEmployerData();
+    
+    // Show login success toast
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _showLoginSuccessToast();
+    });
   }
 
   @override
@@ -84,6 +89,41 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
     _navigator = null;
     
     super.dispose();
+  }
+
+  // Show login success toast
+  void _showLoginSuccessToast() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(
+              Icons.check_circle,
+              color: Colors.white,
+              size: 20,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Login successful! Welcome back, ${_displayName ?? 'Employer'}!',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: mediumSeaGreen,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+        duration: const Duration(seconds: 3),
+        margin: const EdgeInsets.all(16),
+      ),
+    );
   }
 
   Future<void> _initializeEmployerData() async {

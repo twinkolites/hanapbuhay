@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../models/employer_registration_data.dart';
 import '../../services/employer_registration_service.dart';
 import '../../utils/safe_snackbar.dart';
@@ -202,8 +204,29 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
                     const SizedBox(width: 8),
                     const Expanded(
                       child: Text(
-                        'Your registration data has been saved. Email verification will complete your account setup.',
+                        'Your registration data has been saved securely. Email verification will complete your account setup.',
                         style: TextStyle(fontSize: 12, color: Colors.green),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, color: Colors.orange, size: 20),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'If the link expires or doesn\'t work, you can request a new verification email.',
+                        style: TextStyle(fontSize: 12, color: Colors.orange),
                       ),
                     ),
                   ],
@@ -322,7 +345,15 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
 
     // Insert registration data into schema AFTER email confirmation
     try {
+      // First, try to recover data from temporary storage
+      await _recoverRegistrationDataFromStorage();
+      
+      // Then store the data permanently
       await _storeRegistrationData();
+      
+      // Clean up temporary storage
+      await _cleanupTemporaryStorage();
+      
       SafeSnackBar.showSuccess(
         context,
         message: 'Email verified successfully! Your employer account is now complete.',
@@ -344,6 +375,32 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
         );
       }
     });
+  }
+
+  Future<void> _recoverRegistrationDataFromStorage() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final storedData = prefs.getString('pending_employer_registration');
+      
+      if (storedData != null) {
+        final dataMap = jsonDecode(storedData) as Map<String, dynamic>;
+        _registrationData = EmployerRegistrationData.fromJson(dataMap);
+        debugPrint('🔄 Recovered registration data from storage');
+      }
+    } catch (e) {
+      debugPrint('⚠️ Failed to recover registration data: $e');
+    }
+  }
+
+  Future<void> _cleanupTemporaryStorage() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('pending_employer_registration');
+      await prefs.remove('pending_employer_email');
+      debugPrint('🧹 Cleaned up temporary storage');
+    } catch (e) {
+      debugPrint('⚠️ Failed to cleanup temporary storage: $e');
+    }
   }
 
   void _nextStep() {
@@ -400,16 +457,26 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
   Future<void> _createAccountAndSendVerification() async {
     final supabase = Supabase.instance.client;
     final normalizedEmail = _registrationData.email.trim().toLowerCase();
+    
+    // Use proper callback URL as per web best practices
+    final callbackUrl = 'io.supabase.hanapbuhay://login-callback';
     final emailRedirectUrl = 'https://twinkolites.github.io/hanapbuhay/?email=${Uri.encodeComponent(normalizedEmail)}&registration_type=employer';
     
     try {
-      // Try to sign up the user
+      // Store registration data temporarily for persistence during verification
+      await _storeRegistrationDataTemporarily();
+      
+      // Try to sign up the user with proper callback URL
       await supabase.auth.signUp(
         email: normalizedEmail,
         password: _registrationData.password.isNotEmpty 
             ? _registrationData.password 
             : 'temp_${DateTime.now().millisecondsSinceEpoch}',
         emailRedirectTo: emailRedirectUrl,
+        data: {
+          'registration_type': 'employer',
+          'callback_url': callbackUrl,
+        },
       );
       
     } on AuthException catch (e) {
@@ -426,6 +493,19 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
       } else {
         throw e; // Re-throw if it's a different error
       }
+    }
+  }
+
+  Future<void> _storeRegistrationDataTemporarily() async {
+    // Store registration data in SharedPreferences for persistence during verification
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final registrationJson = jsonEncode(_registrationData.toJson());
+      await prefs.setString('pending_employer_registration', registrationJson);
+      await prefs.setString('pending_employer_email', _registrationData.email);
+      debugPrint('💾 Stored registration data temporarily for persistence');
+    } catch (e) {
+      debugPrint('⚠️ Failed to store registration data temporarily: $e');
     }
   }
 
@@ -460,7 +540,6 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
               final step = entry.value;
               final isActive = index == _currentStep;
               final isCompleted = index < _currentStep;
-              final canProceed = true;
 
               return Expanded(
                 child: Row(

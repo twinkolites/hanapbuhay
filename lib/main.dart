@@ -14,6 +14,7 @@ import 'config/app_config.dart';
 import 'services/ai_screening_service.dart';
 import 'services/job_recommendation_service.dart';
 import 'services/deep_link_handler.dart';
+import 'services/stay_signed_in_service.dart';
 import 'dart:async';
 import 'package:flutter/services.dart';
 
@@ -59,7 +60,7 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   late final StreamSubscription<AuthState> _authSubscription;
   late final AppLinks _appLinks;
@@ -68,14 +69,39 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _setupDeepLinkHandling();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _authSubscription.cancel();
     _linkSubscription?.cancel();
     super.dispose();
+  }
+
+  // Handle app lifecycle changes
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+        // App is being paused or terminated
+        StaySignedInService.handleAppTermination();
+        break;
+      case AppLifecycleState.resumed:
+        // App is being resumed
+        break;
+      case AppLifecycleState.inactive:
+        // App is inactive (e.g., phone call)
+        break;
+      case AppLifecycleState.hidden:
+        // App is hidden
+        break;
+    }
   }
 
   void _setupDeepLinkHandling() {
