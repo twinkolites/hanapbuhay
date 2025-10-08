@@ -110,7 +110,7 @@
             </p>
 
             <div class="button-container">
-                <a href="{{ .ConfirmationURL }}" class="confirm-button">
+                <a href="{{ .SiteURL }}?token_hash={{ .TokenHash }}&type=email&email={{ .Email | urlquery }}{{ if .RedirectTo }}&next={{ .RedirectTo | urlquery }}{{ end }}" class="confirm-button">
                     Confirm Email Address
                 </a>
             </div>
@@ -122,7 +122,7 @@
             <div class="link-fallback">
                 <strong>Having trouble with the button?</strong><br>
                 Copy and paste this link into your browser:<br>
-                <a href="{{ .ConfirmationURL }}" style="color: #4CA771; word-break: break-all;">{{ .ConfirmationURL }}</a>
+                <a href="{{ .SiteURL }}?token_hash={{ .TokenHash }}&type=email&email={{ .Email | urlquery }}{{ if .RedirectTo }}&next={{ .RedirectTo | urlquery }}{{ end }}" style="color: #4CA771; word-break: break-all;">{{ .SiteURL }}?token_hash={{ .TokenHash }}&type=email&email={{ .Email | urlquery }}{{ if .RedirectTo }}&next={{ .RedirectTo | urlquery }}{{ end }}</a>
             </div>
         </div>
 

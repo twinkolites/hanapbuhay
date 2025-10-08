@@ -650,6 +650,7 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
         data: {
           'registration_type': 'employer',
           'callback_url': callbackUrl,
+          'role': 'employer', // Store role in user metadata
         },
       );
       

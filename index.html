@@ -441,6 +441,8 @@
                 }
               }
 
+              // Check user metadata to determine registration type
+              await checkUserRegistrationType();
               showSuccess();
               setTimeout(() => tryOpenApp(), 2000);
             } catch (e) {
@@ -504,6 +506,9 @@
                 user: data.user?.email,
                 session: !!data.session 
               });
+              
+              // Check user metadata to determine registration type
+              await checkUserRegistrationType();
               showSuccess();
               setTimeout(() => tryOpenApp(), 2000);
             } catch (e) {
@@ -514,6 +519,9 @@
                 const { data: { user } } = await supabase.auth.getUser();
                 if (user && user.email_confirmed_at) {
                   log("info", "User is already verified despite error");
+                  
+                  // Check user metadata to determine registration type
+                  await checkUserRegistrationType();
                   showSuccess();
                   setTimeout(() => tryOpenApp(), 2000);
                   return;
@@ -540,6 +548,9 @@
               }
 
               log("info", "Session established successfully");
+              
+              // Check user metadata to determine registration type
+              await checkUserRegistrationType();
               showSuccess();
             } catch (e) {
               log("error", "Token verification error", { error: e.message });
@@ -547,6 +558,9 @@
             }
           } else if (type === "signup") {
             log("info", "Processing signup confirmation");
+            
+            // Check user metadata to determine registration type
+            await checkUserRegistrationType();
             showSuccess();
           } else {
             // Handle cases with unrecognized parameters or direct access
@@ -572,9 +586,11 @@
           return;
         }
 
-        // Use the global variables that were extracted from URL parameters
+        // Use the detected registration type from user metadata instead of URL parameter
+        const finalRegistrationType = detectedRegistrationType || registrationType;
+        
         log("info", "Attempting to open mobile app", { 
-          registrationType, 
+          registrationType: finalRegistrationType, 
           tokenHash: token_hash?.substring(0, 8) + '...', 
           type,
           email: emailFromUrl?.substring(0, 8) + '...'
@@ -584,7 +600,7 @@
         let appUrl = "io.supabase.hanapbuhay://login-callback";
         const params = new URLSearchParams();
         
-        if (registrationType) params.set('registration_type', registrationType);
+        if (finalRegistrationType) params.set('registration_type', finalRegistrationType);
         if (token_hash) params.set('token_hash', token_hash);
         if (type) params.set('type', type);
         if (emailFromUrl) params.set('email', emailFromUrl);
@@ -624,6 +640,37 @@
             log("warn", "Iframe method failed", { error: e.message });
           }
         }, 500);
+      }
+
+      // Global variable to store registration type
+      let detectedRegistrationType = null;
+
+      async function checkUserRegistrationType() {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user && user.user_metadata) {
+            // Check if user has employer role in metadata
+            if (user.user_metadata.role === 'employer' || user.user_metadata.registration_type === 'employer') {
+              detectedRegistrationType = 'employer';
+              log("info", "Detected employer registration from user metadata");
+            } else if (user.user_metadata.role === 'applicant' || user.user_metadata.registration_type === 'applicant') {
+              detectedRegistrationType = 'applicant';
+              log("info", "Detected applicant registration from user metadata");
+            } else {
+              // Default to applicant if no specific role is set
+              detectedRegistrationType = 'applicant';
+              log("info", "No specific role detected, defaulting to applicant");
+            }
+          } else {
+            // If no metadata, default to applicant
+            detectedRegistrationType = 'applicant';
+            log("info", "No user metadata found, defaulting to applicant");
+          }
+        } catch (e) {
+          log("warn", "Could not check user metadata", { error: e.message });
+          // Default to applicant on error
+          detectedRegistrationType = 'applicant';
+        }
       }
 
       function showSuccess() {
