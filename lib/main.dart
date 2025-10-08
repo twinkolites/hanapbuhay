@@ -14,7 +14,6 @@ import 'screens/employer/employer_registration_screen.dart';
 import 'config/app_config.dart';
 import 'services/ai_screening_service.dart';
 import 'services/job_recommendation_service.dart';
-import 'services/deep_link_handler.dart';
 import 'services/stay_signed_in_service.dart';
 import 'dart:async';
 import 'package:flutter/services.dart';
@@ -46,8 +45,9 @@ Future<void> main() async {
   // Initialize Job Recommendation Service
   JobRecommendationService.initialize();
 
-  // Initialize Deep Link Handler
-  DeepLinkHandler.initialize();
+  // Note: Deep link handling is now done in MyApp's _setupDeepLinkHandling()
+  // to avoid duplicate processing
+  // DeepLinkHandler.initialize(); // DISABLED
 
   runApp(const MyApp());
 }
@@ -66,6 +66,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   late final StreamSubscription<AuthState> _authSubscription;
   late final AppLinks _appLinks;
   StreamSubscription<Uri>? _linkSubscription;
+  String? _pendingRegistrationType;
 
   @override
   void initState() {
@@ -114,8 +115,14 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       final event = data.event;
       final session = data.session;
 
-      print('🔄 Auth state change: $event'); // Debug print
-      print('🔄 Has session: ${session != null}'); // Debug print
+      print('🔄 Auth state change: $event');
+      print('🔄 Has session: ${session != null}');
+      
+      // Handle successful email verification
+      if (event == AuthChangeEvent.signedIn && session != null) {
+        print('✅ User signed in via email verification');
+        _handleSuccessfulAuth(session);
+      }
     });
 
     // Handle incoming links when app is already running
@@ -147,15 +154,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     }
   }
 
-  void _handleDeepLink(Uri uri) {
-    print('🔗 Handling deep link: $uri'); // Debug print
-    print('🔗 Scheme: ${uri.scheme}, Host: ${uri.host}'); // Debug print
-    print('🔗 Fragment: ${uri.fragment}'); // Debug print
-    print('🔗 Query: ${uri.query}'); // Debug print
+  void _handleDeepLink(Uri uri) async {
+    print('🔗 Handling deep link: $uri');
+    print('🔗 Scheme: ${uri.scheme}, Host: ${uri.host}');
+    print('🔗 Fragment: ${uri.fragment}');
+    print('🔗 Query: ${uri.query}');
 
     // Handle custom scheme links only
     if (uri.scheme == 'io.supabase.hanapbuhay') {
-      // Extract tokens from the URI fragment or query parameters
+      // Extract params from the URI
       final fragment = uri.fragment;
       final query = uri.query;
 
@@ -171,15 +178,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       final errorDescription = params['error_description'];
       final registrationType = params['registration_type'];
       final tokenHash = params['token_hash'];
-      final email = params['email'];
 
-      print('🔗 Deep link params:'); // Debug print
-      print('   - type: $type'); // Debug print
-      print('   - registration_type: $registrationType'); // Debug print
-      print('   - hasAccessToken: ${accessToken != null}'); // Debug print
-      print('   - hasRefreshToken: ${refreshToken != null}'); // Debug print
-      print('   - error: $error'); // Debug print
-      print('   - errorDescription: $errorDescription'); // Debug print
+      print('🔗 Deep link params:');
+      print('   - type: $type');
+      print('   - registration_type: $registrationType');
+      print('   - hasAccessToken: ${accessToken != null}');
+      print('   - hasRefreshToken: ${refreshToken != null}');
+      print('   - hasTokenHash: ${tokenHash != null}');
+      print('   - error: $error');
+      print('   - errorDescription: $errorDescription');
 
       // Handle errors
       if (error != null) {
@@ -188,54 +195,240 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         return;
       }
 
-      // Handle different deep link scenarios for hybrid verification flow
+      // Handle token verification based on type
       if (tokenHash != null && type != null) {
-        print('🔗 Token hash verification detected'); // Debug print
+        print('🔗 Token hash detected - verifying email with token_hash');
         
-        // Check if this is an employer registration
-        if (registrationType == 'employer') {
-          print('🏢 Employer email confirmation detected'); // Debug print
-          _handleEmployerTokenHashVerification(tokenHash, type, email);
-        } else if (registrationType == 'applicant') {
-          print('👤 Applicant email confirmation detected'); // Debug print
-          _handleApplicantTokenHashVerification(tokenHash, type, email);
-        } else {
-          print('📧 Regular email confirmation detected'); // Debug print
-          _handleTokenHashVerification(tokenHash, type, email);
+        try {
+          // Store registration type before verification
+          if (registrationType != null) {
+            _pendingRegistrationType = registrationType;
+            print('📝 Stored registration type: $registrationType');
+          }
+          
+          // For email verification with token_hash, use verifyOTP
+          print('🔗 Verifying with token_hash: ${tokenHash.substring(0, 20)}...');
+          
+          final response = await supabase.auth.verifyOTP(
+            tokenHash: tokenHash,
+            type: OtpType.email,
+          );
+          
+          print('✅ Email verified successfully');
+          print('✅ User: ${response.user?.email}');
+          // The onAuthStateChange listener will handle navigation
+          return; // Prevent duplicate processing
+        } catch (e) {
+          print('❌ Error verifying token hash: $e');
+          _handleVerificationError(e, registrationType);
+          return; // Prevent duplicate processing
         }
-      } else if (type == 'signup' && accessToken != null) {
-        print('🔗 Email confirmation detected'); // Debug print
-        
-        // Check if this is an employer registration
+        return; // Prevent falling through
+      } else if (accessToken != null && refreshToken != null) {
+        // Direct token handling (already authenticated)
+        print('🔗 Access tokens detected - handling authentication');
         if (registrationType == 'employer') {
-          print('🏢 Employer email confirmation detected'); // Debug print
           _handleEmployerEmailConfirmation(accessToken, refreshToken);
-        } else if (registrationType == 'applicant') {
-          print('👤 Applicant email confirmation detected'); // Debug print
-          _handleApplicantEmailConfirmation(accessToken, refreshToken);
         } else {
-          print('📧 Regular email confirmation detected'); // Debug print
           _handleEmailConfirmation(accessToken, refreshToken);
         }
-      } else if (accessToken != null) {
-        // Handle generic auth callback with access token
-        print('🔗 Generic auth callback detected'); // Debug print
-        _handleEmailConfirmation(accessToken, refreshToken);
-      } else if (type == 'recovery' && accessToken != null) {
-        // Handle password recovery (if needed in future)
-        print('🔗 Password recovery detected'); // Debug print
-        _handleEmailConfirmation(accessToken, refreshToken);
       } else {
-        // No tokens found - this could be a manual app open from web verification
-        // Just navigate to the appropriate screen based on auth state
-        print(
-          '🔗 App opened without tokens - checking auth state',
-        ); // Debug print
+        print('🔗 No tokens - checking current auth state');
         _handleAppOpenWithoutTokens();
       }
     } else {
-      print('🔗 Scheme does not match expected patterns'); // Debug print
+      print('🔗 Scheme does not match expected patterns');
     }
+  }
+
+  // Handle successful authentication
+  void _handleSuccessfulAuth(Session session) {
+    print('📝 Handling successful authentication');
+    print('📝 Pending registration type: $_pendingRegistrationType');
+    
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final context = _navigatorKey.currentContext;
+      if (context == null) return;
+      
+      if (_pendingRegistrationType == 'employer') {
+        print('✅ Navigating to employer registration');
+        _showEmployerEmailVerifiedDialog(context);
+      } else {
+        print('✅ Navigating to applicant success');
+        _showApplicantAccountCreatedSuccess(context);
+      }
+      
+      // Clear pending type
+      _pendingRegistrationType = null;
+    });
+  }
+
+  // Handle verification errors
+  void _handleVerificationError(Object error, String? registrationType) {
+    print('❌ Verification error: $error');
+    
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final context = _navigatorKey.currentContext;
+      if (context == null) return;
+      
+      final errorMessage = error.toString();
+      
+      if (errorMessage.contains('expired') || errorMessage.contains('403')) {
+        _showExpiredLinkDialog(context, registrationType);
+      } else {
+        _showEmailConfirmationError(context, errorMessage);
+      }
+    });
+  }
+
+  // Show expired link dialog
+  void _showExpiredLinkDialog(BuildContext context, String? registrationType) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(
+              Icons.access_time_filled,
+              color: Colors.orange.shade600,
+              size: 24,
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Link Expired',
+                style: TextStyle(
+                  color: Color(0xFF013237),
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Your email verification link has expired. This usually happens when:',
+              style: TextStyle(
+                color: const Color(0xFF013237).withValues(alpha: 0.8),
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 12),
+            _buildBulletPoint('The link is older than 1 hour'),
+            _buildBulletPoint('You\'ve already used this link'),
+            _buildBulletPoint('The link was clicked multiple times'),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.shade200),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.lightbulb_outline,
+                    color: Colors.orange.shade700,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Please request a new verification email from the registration screen.',
+                      style: TextStyle(
+                        color: Colors.orange.shade700,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (context) => const LoginScreen()),
+              );
+            },
+            child: Text(
+              'Go to Login',
+              style: TextStyle(
+                color: const Color(0xFF013237).withValues(alpha: 0.7),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              if (registrationType == 'employer') {
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const EmployerRegistrationScreen(),
+                  ),
+                );
+              } else {
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (context) => const RegisterScreen()),
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF4CA771),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Text(
+              'Request New Link',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBulletPoint(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '• ',
+            style: TextStyle(
+              color: const Color(0xFF013237).withValues(alpha: 0.8),
+              fontSize: 14,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                color: const Color(0xFF013237).withValues(alpha: 0.8),
+                fontSize: 14,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _handleAppOpenWithoutTokens() {
@@ -249,16 +442,16 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           // User is verified - show success message and go to login for security
           print(
             '✅ User verified from web - showing success then login for security',
-          ); // Debug print
+          );
           _showWebVerificationSuccess(context);
         } else if (currentUser != null &&
             currentUser.emailConfirmedAt == null) {
           // User logged in but not verified - show verification needed
-          print('⚠️ User logged in but not verified'); // Debug print
+          print('⚠️ User logged in but not verified');
           _showVerificationNeeded(context);
         } else {
           // No user logged in - go to login
-          print('🔐 No user logged in - navigating to login'); // Debug print
+          print('🔐 No user logged in - navigating to login');
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(builder: (context) => const LoginScreen()),
@@ -361,73 +554,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     );
   }
 
-  void _handleApplicantTokenHashVerification(String tokenHash, String type, String? email) async {
-    print('👤 Handling applicant token hash verification'); // Debug print
-
-    try {
-      final supabase = Supabase.instance.client;
-      
-      // Verify the email confirmation using token hash
-      final response = await supabase.auth.verifyOTP(
-        tokenHash: tokenHash,
-        type: OtpType.email,
-      );
-
-      if (response.user != null) {
-        print('✅ Applicant email confirmed successfully via token hash'); // Debug print
-        
-        // Show success toast and navigate to login screen
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          final context = _navigatorKey.currentContext;
-          if (context != null) {
-            _showApplicantAccountCreatedSuccess(context);
-          }
-        });
-      } else {
-        print('❌ Applicant email confirmation failed - no user returned'); // Debug print
-      }
-    } catch (e) {
-      print('❌ Error confirming applicant email via token hash: $e'); // Debug print
-      
-      // Show error message
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        final context = _navigatorKey.currentContext;
-        if (context != null) {
-          _showEmailConfirmationError(context, e.toString());
-        }
-      });
-    }
-  }
-
-  void _handleApplicantEmailConfirmation(String accessToken, String? refreshToken) {
-    print('👤 Handling applicant email confirmation'); // Debug print
-
-    // Set the session manually
-    supabase.auth
-        .setSession(accessToken)
-        .then((_) {
-          print('✅ Applicant session set successfully'); // Debug print
-
-          // Show success toast and navigate to login screen
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            final context = _navigatorKey.currentContext;
-            if (context != null) {
-              _showApplicantAccountCreatedSuccess(context);
-            }
-          });
-        })
-        .catchError((error) {
-          print('❌ Error setting applicant session: $error'); // Debug print
-
-          // Show error message
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            final context = _navigatorKey.currentContext;
-            if (context != null) {
-              _showEmailConfirmationError(context, error.toString());
-            }
-          });
-        });
-  }
 
   void _showApplicantAccountCreatedSuccess(BuildContext context) {
     // Show success toast first
@@ -532,92 +658,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     );
   }
 
-  void _handleEmployerTokenHashVerification(String tokenHash, String type, String? email) async {
-    print('🏢 Handling employer token hash verification'); // Debug print
-
-    try {
-      final supabase = Supabase.instance.client;
-      
-      // Verify the email confirmation using token hash
-      final response = await supabase.auth.verifyOTP(
-        tokenHash: tokenHash,
-        type: OtpType.email,
-      );
-
-      if (response.user != null) {
-        print('✅ Employer email confirmed successfully via token hash'); // Debug print
-        
-        // Show success message and navigate to employer registration screen
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          final context = _navigatorKey.currentContext;
-          if (context != null) {
-            _showEmployerEmailConfirmationSuccess(context);
-          }
-        });
-      } else {
-        print('❌ Employer email confirmation failed - no user returned'); // Debug print
-      }
-    } catch (e) {
-      print('❌ Error confirming employer email via token hash: $e'); // Debug print
-      
-      // Show error message
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        final context = _navigatorKey.currentContext;
-        if (context != null) {
-          _showEmailConfirmationError(context, e.toString());
-        }
-      });
-    }
-  }
-
-  void _handleTokenHashVerification(String tokenHash, String type, String? email) async {
-    print('📧 Handling regular token hash verification'); // Debug print
-
-    try {
-      final supabase = Supabase.instance.client;
-      
-      // Verify the email confirmation using token hash
-      final response = await supabase.auth.verifyOTP(
-        tokenHash: tokenHash,
-        type: OtpType.email,
-      );
-
-      if (response.user != null) {
-        print('✅ Regular email confirmed successfully via token hash'); // Debug print
-        
-        // Show success message and navigate to appropriate screen
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          final context = _navigatorKey.currentContext;
-          if (context != null) {
-            _showEmailConfirmationSuccess(context);
-          }
-        });
-      } else {
-        print('❌ Regular email confirmation failed - no user returned'); // Debug print
-      }
-    } catch (e) {
-      print('❌ Error confirming regular email via token hash: $e'); // Debug print
-      
-      // Handle specific error cases
-      if (e.toString().contains('otp_expired') || e.toString().contains('Email link is invalid')) {
-        // Show expired link dialog with options
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          final context = _navigatorKey.currentContext;
-          if (context != null) {
-            _showExpiredLinkDialog(context, email);
-          }
-        });
-      } else {
-        // Show generic error message
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          final context = _navigatorKey.currentContext;
-          if (context != null) {
-            _showEmailConfirmationError(context, e.toString());
-          }
-        });
-      }
-    }
-  }
 
   void _handleEmployerEmailConfirmation(String accessToken, String? refreshToken) {
     print('🏢 Handling employer email confirmation'); // Debug print
@@ -756,6 +796,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     );
   }
 
+  // Alias for the success message when triggered from auth state change
+  void _showEmployerEmailVerifiedDialog(BuildContext context) {
+    _showEmployerEmailConfirmationSuccess(context);
+  }
+
   void _showEmailConfirmationSuccess(BuildContext context) {
     showDialog(
       context: context,
@@ -820,140 +865,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               style: TextStyle(
                 color: Color(0xFF4CA771),
                 fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showExpiredLinkDialog(BuildContext context, String? email) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text(
-          'Verification Link Expired',
-          style: TextStyle(
-            color: Color(0xFF013237),
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFF3E0),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFFFCC80), width: 1),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.warning_amber,
-                    color: const Color(0xFFE65100),
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'This verification link has expired or has already been used.',
-                      style: TextStyle(
-                        color: const Color(0xFFE65100),
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Don\'t worry! You can still complete your registration by signing in with your email and password.',
-              style: TextStyle(
-                color: const Color(0xFF013237),
-                fontSize: 14,
-              ),
-            ),
-            if (email != null) ...[
-              const SizedBox(height: 12),
-              Text(
-                'Email: $email',
-                style: TextStyle(
-                  color: const Color(0xFF013237),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFEAF9E7),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFC0E6BA), width: 1),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.info_outline, color: const Color(0xFF4CA771), size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'If you haven\'t created an account yet, please register first.',
-                      style: TextStyle(
-                        color: const Color(0xFF013237),
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(builder: (context) => const RegisterScreen()),
-              );
-            },
-            child: const Text(
-              'Register',
-              style: TextStyle(
-                color: Color(0xFF4CA771),
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(builder: (context) => const LoginScreen()),
-              );
-            },
-            child: const Text(
-              'Sign In',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF4CA771),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
               ),
             ),
           ),

@@ -430,6 +430,17 @@
                   user: data.user.email,
                   confirmed: data.user.email_confirmed_at,
                 });
+                
+                // Get the session after successful verification
+                if (data.session) {
+                  log("info", "Session available from verifyOtp response");
+                  // Check user metadata to determine registration type
+                  await checkUserRegistrationType();
+                  showSuccess();
+                  // Pass the session tokens to the app instead of the expired token_hash
+                  setTimeout(() => tryOpenAppWithSession(data.session), 2000);
+                  return;
+                }
               } else {
                 // When Supabase returns no user, attempt to fetch the latest user state
                 log("info", "verifyOtp returned no user - checking current user");
@@ -444,7 +455,13 @@
               // Check user metadata to determine registration type
               await checkUserRegistrationType();
               showSuccess();
-              setTimeout(() => tryOpenApp(), 2000);
+              // Fallback: try getting current session
+              const { data: sessionData } = await supabase.auth.getSession();
+              if (sessionData?.session) {
+                setTimeout(() => tryOpenAppWithSession(sessionData.session), 2000);
+              } else {
+                setTimeout(() => tryOpenApp(), 2000);
+              }
             } catch (e) {
               log("error", "Token hash verification exception", { error: e.message });
               showError("An error occurred during verification. Please try logging into the app.");
@@ -577,6 +594,58 @@
         } catch (err) {
           log("error", "Unexpected verification error", { error: err.message });
           showError("An unexpected error occurred during verification. Please try logging into the app.");
+        }
+      }
+
+      // New function to open app with session tokens (after successful verification)
+      function tryOpenAppWithSession(session) {
+        if (!canMakeCall()) {
+          log("warn", "App opening rate limited");
+          return;
+        }
+
+        // Use the detected registration type from user metadata instead of URL parameter
+        const finalRegistrationType = detectedRegistrationType || registrationType;
+        
+        log("info", "Attempting to open mobile app with session", { 
+          registrationType: finalRegistrationType,
+          hasAccessToken: !!session?.access_token,
+          hasRefreshToken: !!session?.refresh_token,
+          email: session?.user?.email
+        });
+
+        // Build app URL with session tokens instead of expired token_hash
+        let appUrl = "io.supabase.hanapbuhay://login-callback";
+        const params = new URLSearchParams();
+        
+        if (finalRegistrationType) params.set('registration_type', finalRegistrationType);
+        if (session?.access_token) params.set('access_token', session.access_token);
+        if (session?.refresh_token) params.set('refresh_token', session.refresh_token);
+        if (session?.user?.email) params.set('email', session.user.email);
+        params.set('type', 'email');
+        
+        if (params.toString()) {
+          appUrl += '?' + params.toString();
+        }
+        
+        log("info", "Final app URL with session", { appUrl: appUrl.substring(0, 60) + '...' });
+
+        // Clear any existing timers
+        if (window.appOpenTimer) {
+          clearTimeout(window.appOpenTimer);
+        }
+
+        // Try to open the app
+        try {
+          window.location.href = appUrl;
+        } catch (e) {
+          log("warn", "Direct location change failed", { error: e.message });
+        }
+
+        // Update the manual link
+        const appLinkElement = document.getElementById("appLink");
+        if (appLinkElement) {
+          appLinkElement.href = appUrl;
         }
       }
 

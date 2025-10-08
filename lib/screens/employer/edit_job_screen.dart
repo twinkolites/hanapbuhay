@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../services/job_service.dart';
+import '../../services/input_security_service.dart';
 
 class EditJobScreen extends StatefulWidget {
   final Map<String, dynamic> job;
@@ -139,11 +140,19 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
     });
 
     try {
+      // Sanitize all input data before sending to service
+      final sanitizedTitle = InputSecurityService.sanitizeText(_titleController.text.trim());
+      final sanitizedDescription = InputSecurityService.sanitizeText(_descriptionController.text.trim());
+      final sanitizedLocation = InputSecurityService.sanitizeText(_locationController.text.trim());
+      final sanitizedExperienceLevel = _experienceLevelController.text.trim().isNotEmpty
+          ? InputSecurityService.sanitizeText(_experienceLevelController.text.trim())
+          : null;
+      
       final success = await JobService.updateJob(
         jobId: widget.job['id'],
-        title: _titleController.text.trim(),
-        description: _descriptionController.text.trim(),
-        location: _locationController.text.trim(),
+        title: sanitizedTitle,
+        description: sanitizedDescription,
+        location: sanitizedLocation,
         type: _selectedJobType,
         salaryMin: _salaryMinController.text.isNotEmpty
             ? int.tryParse(_salaryMinController.text.replaceAll(',', ''))
@@ -151,9 +160,7 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
         salaryMax: _salaryMaxController.text.isNotEmpty
             ? int.tryParse(_salaryMaxController.text.replaceAll(',', ''))
             : null,
-        experienceLevel: _experienceLevelController.text.trim().isNotEmpty
-            ? _experienceLevelController.text.trim()
-            : null,
+        experienceLevel: sanitizedExperienceLevel,
       );
 
       if (success && mounted) {
@@ -311,6 +318,27 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
                 if (value == null || value.trim().isEmpty) {
                   return 'Job title is required';
                 }
+                
+                // Security validation
+                final sanitized = InputSecurityService.sanitizeText(value);
+                if (sanitized != value) {
+                  return 'Job title contains invalid characters';
+                }
+                
+                // Check for suspicious patterns
+                final suspiciousCheck = InputSecurityService.detectSuspiciousPatterns(value, 'Job title');
+                if (suspiciousCheck != null) {
+                  return suspiciousCheck;
+                }
+                
+                // Length validation
+                if (value.trim().length < 3) {
+                  return 'Job title must be at least 3 characters';
+                }
+                if (value.trim().length > 100) {
+                  return 'Job title must be less than 100 characters';
+                }
+                
                 return null;
               },
             ),
@@ -330,6 +358,27 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
                 if (value == null || value.trim().isEmpty) {
                   return 'Location is required';
                 }
+                
+                // Security validation
+                final sanitized = InputSecurityService.sanitizeText(value);
+                if (sanitized != value) {
+                  return 'Location contains invalid characters';
+                }
+                
+                // Check for suspicious patterns
+                final suspiciousCheck = InputSecurityService.detectSuspiciousPatterns(value, 'Location');
+                if (suspiciousCheck != null) {
+                  return suspiciousCheck;
+                }
+                
+                // Length validation
+                if (value.trim().length < 2) {
+                  return 'Location must be at least 2 characters';
+                }
+                if (value.trim().length > 100) {
+                  return 'Location must be less than 100 characters';
+                }
+                
                 return null;
               },
             ),
@@ -345,6 +394,34 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
               label: 'Experience Level (Optional)',
               hint: 'e.g., Entry Level, Mid Level, Senior',
               icon: Icons.school_outlined,
+              validator: (value) {
+                // Optional field - only validate if not empty
+                if (value == null || value.trim().isEmpty) {
+                  return null;
+                }
+                
+                // Security validation
+                final sanitized = InputSecurityService.sanitizeText(value);
+                if (sanitized != value) {
+                  return 'Experience level contains invalid characters';
+                }
+                
+                // Check for suspicious patterns
+                final suspiciousCheck = InputSecurityService.detectSuspiciousPatterns(value, 'Experience level');
+                if (suspiciousCheck != null) {
+                  return suspiciousCheck;
+                }
+                
+                // Length validation
+                if (value.trim().length < 2) {
+                  return 'Experience level must be at least 2 characters';
+                }
+                if (value.trim().length > 50) {
+                  return 'Experience level must be less than 50 characters';
+                }
+                
+                return null;
+              },
             ),
             
             const SizedBox(height: 20),
@@ -625,6 +702,28 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
                   FilteringTextInputFormatter.digitsOnly,
                   _ThousandsFormatter(),
                 ],
+                validator: (value) {
+                  // Optional field - only validate if not empty
+                  if (value == null || value.trim().isEmpty) {
+                    return null;
+                  }
+                  
+                  // Remove commas for validation
+                  final cleanValue = value.replaceAll(',', '');
+                  
+                  // Security validation using numeric validation
+                  final numericValidation = InputSecurityService.validateSecureNumeric(
+                    cleanValue,
+                    'Minimum salary',
+                    maxValue: 10000000, // 10 million pesos max
+                    minValue: 1,
+                  );
+                  if (numericValidation != null) {
+                    return numericValidation;
+                  }
+                  
+                  return null;
+                },
                 decoration: InputDecoration(
                   hintText: 'Min salary',
                   hintStyle: TextStyle(
@@ -676,6 +775,38 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
                   FilteringTextInputFormatter.digitsOnly,
                   _ThousandsFormatter(),
                 ],
+                validator: (value) {
+                  // Optional field - only validate if not empty
+                  if (value == null || value.trim().isEmpty) {
+                    return null;
+                  }
+                  
+                  // Remove commas for validation
+                  final cleanValue = value.replaceAll(',', '');
+                  
+                  // Security validation using numeric validation
+                  final numericValidation = InputSecurityService.validateSecureNumeric(
+                    cleanValue,
+                    'Maximum salary',
+                    maxValue: 10000000, // 10 million pesos max
+                    minValue: 1,
+                  );
+                  if (numericValidation != null) {
+                    return numericValidation;
+                  }
+                  
+                  // Additional validation: max salary should be >= min salary if both provided
+                  final minSalaryText = _salaryMinController.text.replaceAll(',', '');
+                  if (minSalaryText.isNotEmpty) {
+                    final minSalary = int.tryParse(minSalaryText);
+                    final maxSalary = int.tryParse(cleanValue);
+                    if (minSalary != null && maxSalary != null && maxSalary < minSalary) {
+                      return 'Maximum salary must be greater than or equal to minimum salary';
+                    }
+                  }
+                  
+                  return null;
+                },
                 decoration: InputDecoration(
                   hintText: 'Max salary',
                   hintStyle: TextStyle(
@@ -744,6 +875,27 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
             if (value == null || value.trim().isEmpty) {
               return 'Job description is required';
             }
+            
+            // Security validation
+            final sanitized = InputSecurityService.sanitizeText(value);
+            if (sanitized != value) {
+              return 'Job description contains invalid characters';
+            }
+            
+            // Check for suspicious patterns
+            final suspiciousCheck = InputSecurityService.detectSuspiciousPatterns(value, 'Job description');
+            if (suspiciousCheck != null) {
+              return suspiciousCheck;
+            }
+            
+            // Length validation
+            if (value.trim().length < 10) {
+              return 'Job description must be at least 10 characters';
+            }
+            if (value.trim().length > 2000) {
+              return 'Job description must be less than 2000 characters';
+            }
+            
             return null;
           },
           decoration: InputDecoration(
