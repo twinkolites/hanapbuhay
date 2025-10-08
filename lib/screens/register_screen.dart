@@ -244,6 +244,21 @@ class _RegisterScreenState extends State<RegisterScreen>
 
   void _onEmailConfirmed() {
     if (!mounted) return;
+    
+    // Show success toast first
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Account created successfully! Email verified.'),
+        backgroundColor: mediumSeaGreen,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+    
+    // Then show the dialog
     showDialog(
       context: context,
       barrierDismissible: false,

@@ -119,6 +119,18 @@ class _LoginScreenState extends State<LoginScreen>
   // Check for existing session (Stay Signed In functionality)
   Future<void> _checkExistingSession() async {
     try {
+      // Only check for existing session if stay signed in is enabled
+      if (!_staySignedIn) {
+        // If stay signed in is disabled, sign out any existing session
+        await supabase.auth.signOut();
+        if (mounted) {
+          setState(() {
+            _isCheckingSession = false;
+          });
+        }
+        return;
+      }
+
       // Get current session
       final session = supabase.auth.currentSession;
 
@@ -231,6 +243,13 @@ class _LoginScreenState extends State<LoginScreen>
         final user = supabase.auth.currentUser;
         if (user != null && user.emailConfirmedAt == null) {
           _showEmailNotVerifiedDialog();
+          return;
+        }
+
+        // If stay signed in is disabled, sign out after successful login
+        if (!_staySignedIn) {
+          await supabase.auth.signOut();
+          _showErrorDialog('Stay signed in is disabled. Please enable it to maintain your session.');
           return;
         }
 
@@ -389,42 +408,6 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  Future<void> _signInWithGoogle() async {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-
-    try {
-      bool success = await authProvider.signInWithGoogle();
-
-      if (success && mounted) {
-        // Check if email is verified (Google accounts are typically pre-verified)
-        final user = supabase.auth.currentUser;
-        if (user != null && user.emailConfirmedAt == null) {
-          _showEmailNotVerifiedDialog();
-          return;
-        }
-
-        // Show success toast
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Google login successful! Welcome back!'),
-            backgroundColor: mediumSeaGreen,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-            duration: const Duration(seconds: 2),
-          ),
-        );
-
-        // Check user role and handle employer approval workflow
-        await _checkUserRoleAndNavigate();
-      } else if (mounted && authProvider.error != null) {
-        _showErrorDialog(authProvider.error!);
-      }
-    } catch (e) {
-      _showErrorDialog('Google Sign-In failed: $e');
-    }
-  }
 
   // Check user role and handle employer approval workflow
   Future<void> _checkUserRoleAndNavigate() async {
@@ -760,13 +743,6 @@ class _LoginScreenState extends State<LoginScreen>
             _buildLoginButton(),
             const SizedBox(height: 20),
 
-            // Divider
-            _buildDivider(),
-            const SizedBox(height: 20),
-
-            // Google sign in
-            _buildGoogleSignIn(),
-            const SizedBox(height: 15),
 
             // Create account link
             _buildCreateAccountLink(),
@@ -1007,75 +983,4 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  Widget _buildDivider() {
-    return Row(
-      children: [
-        Expanded(
-          child: Divider(color: darkTeal.withValues(alpha: 0.2), thickness: 1),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Text(
-            'or continue with',
-            style: TextStyle(
-              color: darkTeal.withValues(alpha: 0.6),
-              fontSize: 11,
-            ),
-          ),
-        ),
-        Expanded(
-          child: Divider(color: darkTeal.withValues(alpha: 0.2), thickness: 1),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildGoogleSignIn() {
-    return Consumer<AuthProvider>(
-      builder: (context, authProvider, child) {
-        return Center(
-          child: GestureDetector(
-            onTap: authProvider.isLoading ? null : _signInWithGoogle,
-            child: Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: darkTeal.withValues(alpha: 0.1),
-                  width: 1,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: darkTeal.withValues(alpha: 0.1),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: authProvider.isLoading
-                  ? const Center(
-                      child: SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    )
-                  : const Center(
-                      child: Text(
-                        'G',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF4285F4),
-                        ),
-                      ),
-                    ),
-            ),
-          ),
-        );
-      },
-    );
-  }
 }

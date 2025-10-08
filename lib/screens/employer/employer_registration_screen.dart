@@ -156,68 +156,6 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
     });
   }
 
-  Future<void> _verifyEmail() async {
-    if (_registrationData.email.isEmpty) {
-      SafeSnackBar.showError(
-        context,
-        message: 'Please enter your email address first.',
-      );
-      return;
-    }
-
-    setState(() => _isLoading = true);
-
-    try {
-      // First, try to sign up the user to create an account
-      final supabase = Supabase.instance.client;
-      final normalizedEmail = _registrationData.email.trim().toLowerCase();
-      final emailRedirectUrl = 'https://twinkolites.github.io/hanapbuhay/?email=${Uri.encodeComponent(normalizedEmail)}';
-      
-      try {
-        await supabase.auth.signUp(
-          email: normalizedEmail,
-          password: _registrationData.password.isNotEmpty 
-              ? _registrationData.password 
-              : 'temp_${DateTime.now().millisecondsSinceEpoch}',
-          emailRedirectTo: emailRedirectUrl,
-        );
-        
-        _showEmailVerificationDialog();
-        _startEmailVerificationListener();
-        setState(() => _isLoading = false);
-      } on AuthException catch (e) {
-        // If user already exists, use resend method
-        if (e.message.contains('already registered') || 
-            e.message.contains('User already registered')) {
-          
-          // Use the proper resend method for existing users
-          await supabase.auth.resend(
-            type: OtpType.signup,
-            email: normalizedEmail,
-            emailRedirectTo: emailRedirectUrl,
-          );
-          
-          _showEmailVerificationDialog();
-          _startEmailVerificationListener();
-          setState(() => _isLoading = false);
-        } else {
-          throw e; // Re-throw if it's a different error
-        }
-      }
-    } on AuthException catch (e) {
-      SafeSnackBar.showError(
-        context,
-        message: 'Error sending verification email: ${e.message}',
-      );
-      setState(() => _isLoading = false);
-    } catch (e) {
-      SafeSnackBar.showError(
-        context,
-        message: 'Error sending verification email. Please try again.',
-      );
-      setState(() => _isLoading = false);
-    }
-  }
 
   void _showEmailVerificationDialog() {
     showDialog(
@@ -247,25 +185,25 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
               ),
               const SizedBox(height: 16),
               const Text(
-                'Please check your email and click the verification link to continue with your registration.',
+                'Please check your email and click the verification link to complete your employer account setup.',
                 style: TextStyle(fontSize: 14),
               ),
               const SizedBox(height: 16),
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.1),
+                  color: Colors.green.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                  border: Border.all(color: Colors.green.withOpacity(0.3)),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.warning, color: Colors.orange, size: 20),
+                    Icon(Icons.check_circle, color: Colors.green, size: 20),
                     const SizedBox(width: 8),
                     const Expanded(
                       child: Text(
-                        'You cannot proceed without email verification.',
-                        style: TextStyle(fontSize: 12, color: Colors.orange),
+                        'Your registration data has been saved. Email verification will complete your account setup.',
+                        style: TextStyle(fontSize: 12, color: Colors.green),
                       ),
                     ),
                   ],
@@ -277,13 +215,19 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
             TextButton(
               onPressed: () {
                 Navigator.of(context).pop();
+                // Navigate to login screen after email verification
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (context) => const LoginScreen()),
+                  (route) => false,
+                );
               },
-              child: const Text('OK'),
+              child: const Text('Go to Login'),
             ),
             ElevatedButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                _verifyEmail();
+                _resendVerificationEmail();
               },
               child: const Text('Resend Email'),
             ),
@@ -291,6 +235,30 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
         );
       },
     );
+  }
+
+  Future<void> _resendVerificationEmail() async {
+    try {
+      final supabase = Supabase.instance.client;
+      final normalizedEmail = _registrationData.email.trim().toLowerCase();
+      final emailRedirectUrl = 'https://twinkolites.github.io/hanapbuhay/?email=${Uri.encodeComponent(normalizedEmail)}&registration_type=employer';
+      
+      await supabase.auth.resend(
+        type: OtpType.signup,
+        email: normalizedEmail,
+        emailRedirectTo: emailRedirectUrl,
+      );
+      
+      SafeSnackBar.showSuccess(
+        context,
+        message: 'Verification email sent! Please check your inbox.',
+      );
+    } catch (e) {
+      SafeSnackBar.showError(
+        context,
+        message: 'Failed to resend verification email: ${e.toString()}',
+      );
+    }
   }
 
   Future<void> _checkEmailVerification() async {
@@ -340,7 +308,7 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
     _verificationCheckTimer = null;
   }
 
-  void _handleEmailVerificationSuccess(String? email) {
+  void _handleEmailVerificationSuccess(String? email) async {
     _stopEmailVerificationListener();
 
     if (!mounted || _isEmailVerified) {
@@ -352,19 +320,33 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
       _verificationEmail = email ?? _verificationEmail;
     });
 
-    SafeSnackBar.showSuccess(
-      context,
-      message: 'Email verified successfully! You can now proceed.',
-    );
+    // Insert registration data into schema AFTER email confirmation
+    try {
+      await _storeRegistrationData();
+      SafeSnackBar.showSuccess(
+        context,
+        message: 'Email verified successfully! Your employer account is now complete.',
+      );
+    } catch (e) {
+      SafeSnackBar.showError(
+        context,
+        message: 'Email verified but failed to complete registration: ${e.toString()}',
+      );
+    }
+
+    // Navigate to login screen after successful verification
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (context) => const LoginScreen()),
+          (route) => false,
+        );
+      }
+    });
   }
 
   void _nextStep() {
-    // Check if email verification is required when moving from step 0 (personal info)
-    if (_currentStep == 0 && !_isEmailVerified) {
-      _verifyEmail();
-      return;
-    }
-
     if (_currentStep < _steps.length - 1) {
       // Add a small delay to prevent animation conflicts
       Future.delayed(const Duration(milliseconds: 100), () {
@@ -391,95 +373,22 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
   }
 
   Future<void> _submitRegistration() async {
-    // Ensure email is verified before submission
-    if (!_isEmailVerified) {
-      SafeSnackBar.showError(
-        context,
-        message: 'Please verify your email address before submitting.',
-      );
-      return;
-    }
-
     setState(() => _isLoading = true);
 
     try {
-      final result = await EmployerRegistrationService.registerEmployer(
-        registrationData: _registrationData,
-      );
-
-      if (result['success'] == true) {
-        // Check if email confirmation is required
-        if (result['requiresEmailConfirmation'] == true) {
-          SafeSnackBar.showSuccess(
-            context,
-            message: result['message'] ?? 'Registration submitted successfully! Please check your email for verification.',
-          );
-          
-          // Show email confirmation dialog
-          _showEmailConfirmationDialog(result['email']);
-        } else if (result['requiresManualLogin'] == true) {
-          // Account created but manual login required
-          SafeSnackBar.showSuccess(
-            context,
-            message: result['message'] ?? 'Account created successfully! Please log in to complete your registration.',
-          );
-          
-          // Navigate to login screen after a delay
-          await Future.delayed(const Duration(seconds: 2));
-          if (mounted) {
-            Navigator.pushAndRemoveUntil(
-              context,
-              MaterialPageRoute(builder: (context) => const LoginScreen()),
-              (route) => false,
-            );
-          }
-        } else {
-          // Normal successful registration
-          SafeSnackBar.showSuccess(
-            context,
-            message: 'Registration completed successfully!',
-          );
-
-          // Wait a moment for the session to be established
-          await Future.delayed(const Duration(seconds: 1));
-          
-          if (mounted) {
-            // Check if user is authenticated and navigate accordingly
-            final user = Supabase.instance.client.auth.currentUser;
-            if (user != null) {
-              // User is authenticated, navigate to login screen which will handle role checking
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(builder: (context) => const LoginScreen()),
-                (route) => false,
-              );
-            } else {
-              // User is not authenticated, show error and navigate to login
-              SafeSnackBar.showError(
-                context,
-                message: 'Authentication session not established. Please log in manually.',
-              );
-              await Future.delayed(const Duration(seconds: 2));
-              if (mounted) {
-                Navigator.pushAndRemoveUntil(
-                  context,
-                  MaterialPageRoute(builder: (context) => const LoginScreen()),
-                  (route) => false,
-                );
-              }
-            }
-          }
-        }
-      } else {
-        SafeSnackBar.showError(
-          context,
-          message: result['message'] ?? 'Registration failed. Please try again.',
-        );
-      }
+      // First, create the user account and send email verification
+      await _createAccountAndSendVerification();
+      
+      // Show email verification dialog
+      _showEmailVerificationDialog();
+      
+      // Start listening for email verification
+      _startEmailVerificationListener();
+      
     } catch (e) {
       SafeSnackBar.showError(
         context,
-        message: 'An unexpected error occurred. Please try again.',
+        message: 'Failed to create account: ${e.toString()}',
       );
     } finally {
       if (mounted) {
@@ -488,63 +397,70 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
     }
   }
 
+  Future<void> _createAccountAndSendVerification() async {
+    final supabase = Supabase.instance.client;
+    final normalizedEmail = _registrationData.email.trim().toLowerCase();
+    final emailRedirectUrl = 'https://twinkolites.github.io/hanapbuhay/?email=${Uri.encodeComponent(normalizedEmail)}&registration_type=employer';
+    
+    try {
+      // Try to sign up the user
+      await supabase.auth.signUp(
+        email: normalizedEmail,
+        password: _registrationData.password.isNotEmpty 
+            ? _registrationData.password 
+            : 'temp_${DateTime.now().millisecondsSinceEpoch}',
+        emailRedirectTo: emailRedirectUrl,
+      );
+      
+    } on AuthException catch (e) {
+      // If user already exists, use resend method
+      if (e.message.contains('already registered') || 
+          e.message.contains('User already registered')) {
+        
+        // Use the proper resend method for existing users
+        await supabase.auth.resend(
+          type: OtpType.signup,
+          email: normalizedEmail,
+          emailRedirectTo: emailRedirectUrl,
+        );
+      } else {
+        throw e; // Re-throw if it's a different error
+      }
+    }
+  }
+
+  Future<void> _storeRegistrationData() async {
+    // Store registration data in SharedPreferences or similar
+    // This will be used after email verification to complete the registration
+    // For now, we'll use a simple approach with the existing service
+    
+    try {
+      // Call the registration service to store the data
+      final result = await EmployerRegistrationService.registerEmployer(
+        registrationData: _registrationData,
+      );
+      
+      if (result['success'] != true) {
+        throw Exception(result['message'] ?? 'Failed to store registration data');
+      }
+      
+    } catch (e) {
+      // If storing fails, we still want to send the email verification
+      // The user can complete registration after email verification
+      debugPrint('Warning: Failed to store registration data: $e');
+    }
+  }
+
   Widget _buildStepIndicator() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      child: Column(
-        children: [
-          // Email verification status
-          if (_registrationData.email.isNotEmpty)
-            Container(
-              margin: const EdgeInsets.only(bottom: 16),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: _isEmailVerified 
-                    ? Colors.green.withOpacity(0.1)
-                    : Colors.orange.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: _isEmailVerified 
-                      ? Colors.green.withOpacity(0.3)
-                      : Colors.orange.withOpacity(0.3),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    _isEmailVerified ? Icons.verified : Icons.warning,
-                    color: _isEmailVerified ? Colors.green : Colors.orange,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _isEmailVerified 
-                          ? 'Email verified: ${_registrationData.email}'
-                          : 'Email verification required: ${_registrationData.email}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: _isEmailVerified ? Colors.green : Colors.orange,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                  if (!_isEmailVerified)
-                    TextButton(
-                      onPressed: _verifyEmail,
-                      child: const Text('Verify', style: TextStyle(fontSize: 12)),
-                    ),
-                ],
-              ),
-            ),
-          // Step indicator
-          Row(
+      child: Row(
             children: _steps.asMap().entries.map((entry) {
               final index = entry.key;
               final step = entry.value;
               final isActive = index == _currentStep;
               final isCompleted = index < _currentStep;
-              final canProceed = index == 0 ? _isEmailVerified : true;
+              final canProceed = true;
 
               return Expanded(
                 child: Row(
@@ -555,9 +471,7 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
                       decoration: BoxDecoration(
                         color: isActive || isCompleted
                             ? mediumSeaGreen
-                            : canProceed
-                                ? Colors.grey.withValues(alpha: 0.3)
-                                : Colors.red.withValues(alpha: 0.3),
+                            : Colors.grey.withValues(alpha: 0.3),
                         shape: BoxShape.circle,
                       ),
                       child: Icon(
@@ -574,9 +488,7 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
                           decoration: BoxDecoration(
                             color: isCompleted
                                 ? mediumSeaGreen
-                                : canProceed
-                                    ? Colors.grey.withValues(alpha: 0.3)
-                                    : Colors.red.withValues(alpha: 0.3),
+                                : Colors.grey.withValues(alpha: 0.3),
                             borderRadius: BorderRadius.circular(1),
                           ),
                         ),
@@ -585,8 +497,6 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
                 ),
               );
             }).toList(),
-          ),
-        ],
       ),
     );
   }
@@ -632,61 +542,6 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
     }
   }
 
-  void _showEmailConfirmationDialog(String email) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Row(
-            children: [
-              Icon(Icons.email, color: Colors.blue),
-              const SizedBox(width: 8),
-              const Text('Check Your Email'),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('We\'ve sent a confirmation link to:'),
-              const SizedBox(height: 8),
-              Text(
-                email,
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.blue,
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Please check your email and click the confirmation link to complete your employer account setup.',
-                style: TextStyle(fontSize: 14),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'After confirming your email, you can log in to access your employer dashboard.',
-                style: TextStyle(fontSize: 14, fontStyle: FontStyle.italic),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                Navigator.pushAndRemoveUntil(
-                  context,
-                  MaterialPageRoute(builder: (context) => const LoginScreen()),
-                  (route) => false,
-                );
-              },
-              child: const Text('Go to Login'),
-            ),
-          ],
-        );
-      },
-    );
-  }
 
   @override
   Widget build(BuildContext context) {

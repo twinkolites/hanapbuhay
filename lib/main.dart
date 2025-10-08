@@ -9,9 +9,11 @@ import 'screens/applicant/home_screen.dart';
 import 'screens/employer/home_screen.dart';
 import 'screens/admin/admin_dashboard_screen.dart';
 import 'screens/applicant/job_preferences_screen.dart';
+import 'screens/employer/employer_registration_screen.dart';
 import 'config/app_config.dart';
 import 'services/ai_screening_service.dart';
 import 'services/job_recommendation_service.dart';
+import 'services/deep_link_handler.dart';
 import 'dart:async';
 import 'package:flutter/services.dart';
 
@@ -41,6 +43,9 @@ Future<void> main() async {
   
   // Initialize Job Recommendation Service
   JobRecommendationService.initialize();
+
+  // Initialize Deep Link Handler
+  DeepLinkHandler.initialize();
 
   runApp(const MyApp());
 }
@@ -137,9 +142,13 @@ class _MyAppState extends State<MyApp> {
       final type = params['type'];
       final error = params['error'];
       final errorDescription = params['error_description'];
+      final registrationType = params['registration_type'];
+      final tokenHash = params['token_hash'];
+      final email = params['email'];
 
       print('🔗 Deep link params:'); // Debug print
       print('   - type: $type'); // Debug print
+      print('   - registration_type: $registrationType'); // Debug print
       print('   - hasAccessToken: ${accessToken != null}'); // Debug print
       print('   - hasRefreshToken: ${refreshToken != null}'); // Debug print
       print('   - error: $error'); // Debug print
@@ -153,10 +162,28 @@ class _MyAppState extends State<MyApp> {
       }
 
       // Handle different deep link scenarios for hybrid verification flow
-
-      if (type == 'signup' && accessToken != null) {
+      if (tokenHash != null && type != null) {
+        print('🔗 Token hash verification detected'); // Debug print
+        
+        // Check if this is an employer registration
+        if (registrationType == 'employer') {
+          print('🏢 Employer email confirmation detected'); // Debug print
+          _handleEmployerTokenHashVerification(tokenHash, type, email);
+        } else {
+          print('📧 Regular email confirmation detected'); // Debug print
+          _handleTokenHashVerification(tokenHash, type, email);
+        }
+      } else if (type == 'signup' && accessToken != null) {
         print('🔗 Email confirmation detected'); // Debug print
-        _handleEmailConfirmation(accessToken, refreshToken);
+        
+        // Check if this is an employer registration
+        if (registrationType == 'employer') {
+          print('🏢 Employer email confirmation detected'); // Debug print
+          _handleEmployerEmailConfirmation(accessToken, refreshToken);
+        } else {
+          print('📧 Regular email confirmation detected'); // Debug print
+          _handleEmailConfirmation(accessToken, refreshToken);
+        }
       } else if (accessToken != null) {
         // Handle generic auth callback with access token
         print('🔗 Generic auth callback detected'); // Debug print
@@ -301,6 +328,112 @@ class _MyAppState extends State<MyApp> {
     );
   }
 
+  void _handleEmployerTokenHashVerification(String tokenHash, String type, String? email) async {
+    print('🏢 Handling employer token hash verification'); // Debug print
+
+    try {
+      final supabase = Supabase.instance.client;
+      
+      // Verify the email confirmation using token hash
+      final response = await supabase.auth.verifyOTP(
+        tokenHash: tokenHash,
+        type: OtpType.email,
+      );
+
+      if (response.user != null) {
+        print('✅ Employer email confirmed successfully via token hash'); // Debug print
+        
+        // Show success message and navigate to employer registration screen
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final context = _navigatorKey.currentContext;
+          if (context != null) {
+            _showEmployerEmailConfirmationSuccess(context);
+          }
+        });
+      } else {
+        print('❌ Employer email confirmation failed - no user returned'); // Debug print
+      }
+    } catch (e) {
+      print('❌ Error confirming employer email via token hash: $e'); // Debug print
+      
+      // Show error message
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final context = _navigatorKey.currentContext;
+        if (context != null) {
+          _showEmailConfirmationError(context, e.toString());
+        }
+      });
+    }
+  }
+
+  void _handleTokenHashVerification(String tokenHash, String type, String? email) async {
+    print('📧 Handling regular token hash verification'); // Debug print
+
+    try {
+      final supabase = Supabase.instance.client;
+      
+      // Verify the email confirmation using token hash
+      final response = await supabase.auth.verifyOTP(
+        tokenHash: tokenHash,
+        type: OtpType.email,
+      );
+
+      if (response.user != null) {
+        print('✅ Regular email confirmed successfully via token hash'); // Debug print
+        
+        // Show success message and navigate to appropriate screen
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final context = _navigatorKey.currentContext;
+          if (context != null) {
+            _showEmailConfirmationSuccess(context);
+          }
+        });
+      } else {
+        print('❌ Regular email confirmation failed - no user returned'); // Debug print
+      }
+    } catch (e) {
+      print('❌ Error confirming regular email via token hash: $e'); // Debug print
+      
+      // Show error message
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final context = _navigatorKey.currentContext;
+        if (context != null) {
+          _showEmailConfirmationError(context, e.toString());
+        }
+      });
+    }
+  }
+
+  void _handleEmployerEmailConfirmation(String accessToken, String? refreshToken) {
+    print('🏢 Handling employer email confirmation'); // Debug print
+
+    // Set the session manually
+    supabase.auth
+        .setSession(accessToken)
+        .then((_) {
+          print('✅ Employer session set successfully'); // Debug print
+
+          // Show success message and navigate to employer registration screen
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            final context = _navigatorKey.currentContext;
+            if (context != null) {
+              _showEmployerEmailConfirmationSuccess(context);
+            }
+          });
+        })
+        .catchError((error) {
+          print('❌ Error setting employer session: $error'); // Debug print
+
+          // Show error message
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            final context = _navigatorKey.currentContext;
+            if (context != null) {
+              _showEmailConfirmationError(context, error.toString());
+            }
+          });
+        });
+  }
+
   void _handleEmailConfirmation(String accessToken, String? refreshToken) {
     print('✅ Handling email confirmation'); // Debug print
 
@@ -329,6 +462,83 @@ class _MyAppState extends State<MyApp> {
             }
           });
         });
+  }
+
+  void _showEmployerEmailConfirmationSuccess(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Employer Email Confirmed!',
+          style: TextStyle(
+            color: Color(0xFF013237),
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Your employer email has been successfully verified!',
+              style: TextStyle(
+                color: Color(0xFF013237),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'You can now continue with your employer registration process.',
+              style: TextStyle(color: Color(0xFF013237), fontSize: 14),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEAF9E7),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFC0E6BA), width: 1),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.business, color: Color(0xFF4CA771), size: 20),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Complete your employer profile to start posting jobs.',
+                      style: TextStyle(color: Color(0xFF013237), fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              // Navigate to employer registration screen
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const EmployerRegistrationScreen(),
+                ),
+              );
+            },
+            child: const Text(
+              'Continue Registration',
+              style: TextStyle(
+                color: Color(0xFF4CA771),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showEmailConfirmationSuccess(BuildContext context) {

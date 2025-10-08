@@ -570,8 +570,27 @@
           return;
         }
 
-        const appUrl = "io.supabase.hanapbuhay://";
-        log("info", "Attempting to open mobile app");
+        // Get registration type and other parameters from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const registrationType = urlParams.get('registration_type');
+        const tokenHash = urlParams.get('token_hash');
+        const type = urlParams.get('type');
+        const email = urlParams.get('email');
+        
+        // Build app URL with parameters
+        let appUrl = "io.supabase.hanapbuhay://";
+        const params = new URLSearchParams();
+        
+        if (registrationType) params.set('registration_type', registrationType);
+        if (tokenHash) params.set('token_hash', tokenHash);
+        if (type) params.set('type', type);
+        if (email) params.set('email', email);
+        
+        if (params.toString()) {
+          appUrl += '?' + params.toString();
+        }
+        
+        log("info", "Attempting to open mobile app", { registrationType, tokenHash: tokenHash?.substring(0, 8) + '...', type });
 
         // Clear any existing timers
         if (window.appOpenTimer) {
