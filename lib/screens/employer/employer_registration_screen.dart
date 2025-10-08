@@ -295,8 +295,17 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
 
   Future<void> _checkEmailVerification() async {
     // Check if user is authenticated and email is confirmed
+    final authClient = Supabase.instance.client.auth;
+    final currentSession = authClient.currentSession;
+
+    if (currentSession == null) {
+      // No session yet (user hasn't logged in after signup). Avoid calling getUser which throws.
+      debugPrint('ℹ️ Skipping verification check - no active auth session. Waiting for sign-in or deep link.');
+      return;
+    }
+
     try {
-      final response = await Supabase.instance.client.auth.getUser();
+      final response = await authClient.getUser();
       final user = response.user;
 
       if (user != null && user.emailConfirmedAt != null && !_isEmailVerified) {
