@@ -108,8 +108,9 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
     
     _animationController.forward();
     
-    // Check email verification status on app resume
+    // Check for pending registration data and restore it
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkAndRestorePendingData();
       _checkEmailVerification();
       _startEmailVerificationListener();
     });
@@ -266,6 +267,9 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
       final normalizedEmail = _registrationData.email.trim().toLowerCase();
       final emailRedirectUrl = 'https://twinkolites.github.io/hanapbuhay/?email=${Uri.encodeComponent(normalizedEmail)}&registration_type=employer';
       
+      // Ensure data is stored before resending
+      await _storeRegistrationDataTemporarily();
+      
       await supabase.auth.resend(
         type: OtpType.signup,
         email: normalizedEmail,
@@ -274,8 +278,12 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
       
       SafeSnackBar.showSuccess(
         context,
-        message: 'Verification email sent! Please check your inbox.',
+        message: 'New verification email sent! Please check your inbox and spam folder.',
       );
+      
+      // Restart verification listener
+      _startEmailVerificationListener();
+      
     } catch (e) {
       SafeSnackBar.showError(
         context,
@@ -324,11 +332,101 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
 
     // Kick off an immediate check so the first update isn't delayed
     _checkEmailVerification();
+    
+    // Set a timeout to detect failed verification attempts
+    Timer(const Duration(minutes: 5), () {
+      if (!_isEmailVerified && mounted) {
+        debugPrint('⏰ Email verification timeout - showing failure dialog');
+        _handleEmailVerificationFailure();
+      }
+    });
   }
 
   void _stopEmailVerificationListener() {
     _verificationCheckTimer?.cancel();
     _verificationCheckTimer = null;
+  }
+
+  void _handleEmailVerificationFailure() {
+    // Show dialog with options for failed verification
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.warning, color: Colors.orange),
+              const SizedBox(width: 8),
+              const Text('Verification Failed'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Your email verification failed. This could happen if:',
+                style: TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 12),
+              const Text('• The verification link expired'),
+              const Text('• The link was already used'),
+              const Text('• There was a network issue'),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, color: Colors.blue, size: 20),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'Your registration data is saved. You can request a new verification email.',
+                        style: TextStyle(fontSize: 12, color: Colors.blue),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _clearPendingData();
+              },
+              child: const Text('Start Fresh'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                // Navigate to login screen
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (context) => const LoginScreen()),
+                  (route) => false,
+                );
+              },
+              child: const Text('Go to Login'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _resendVerificationEmail();
+              },
+              child: const Text('Resend Email'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _handleEmailVerificationSuccess(String? email) async {
@@ -377,6 +475,40 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
     });
   }
 
+  Future<void> _checkAndRestorePendingData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final storedData = prefs.getString('pending_employer_registration');
+      final storedEmail = prefs.getString('pending_employer_email');
+      
+      if (storedData != null && storedEmail != null) {
+        final dataMap = jsonDecode(storedData) as Map<String, dynamic>;
+        final restoredData = EmployerRegistrationData.fromJson(dataMap);
+        
+        // Only restore if the email matches and data is not empty
+        if (restoredData.email.isNotEmpty && restoredData.email == storedEmail) {
+          setState(() {
+            _registrationData = restoredData;
+            _verificationEmail = storedEmail;
+          });
+          
+          debugPrint('🔄 Restored pending registration data for: ${storedEmail}');
+          
+          // Show restoration notification
+          SafeSnackBar.showInfo(
+            context,
+            message: 'Your registration data has been restored. You can continue from where you left off.',
+          );
+          
+          // Check if user is already verified
+          await _checkEmailVerification();
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ Failed to check/restore pending data: $e');
+    }
+  }
+
   Future<void> _recoverRegistrationDataFromStorage() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -400,6 +532,48 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
       debugPrint('🧹 Cleaned up temporary storage');
     } catch (e) {
       debugPrint('⚠️ Failed to cleanup temporary storage: $e');
+    }
+  }
+
+  Future<void> _clearPendingData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('pending_employer_registration');
+      await prefs.remove('pending_employer_email');
+      
+      // Reset registration data
+      setState(() {
+        _registrationData = EmployerRegistrationData(
+          fullName: '',
+          email: '',
+          password: '',
+          companyName: '',
+          companyAbout: '',
+          businessAddress: '',
+          city: '',
+          province: '',
+          postalCode: '',
+          country: 'Philippines',
+          industry: '',
+          companySize: '',
+          businessType: '',
+          contactPersonName: '',
+          contactPersonPosition: '',
+          contactPersonEmail: '',
+        );
+        _isEmailVerified = false;
+        _verificationEmail = null;
+        _currentStep = 0;
+      });
+      
+      debugPrint('🗑️ Cleared all pending registration data');
+      
+      SafeSnackBar.showSuccess(
+        context,
+        message: 'Registration data cleared. You can start fresh.',
+      );
+    } catch (e) {
+      debugPrint('⚠️ Failed to clear pending data: $e');
     }
   }
 
