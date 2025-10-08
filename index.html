@@ -407,34 +407,42 @@
 
           // Handle different verification scenarios
           if (token_hash && type) {
-            // This is the new format from auth.resend() with OtpType.signup
-            log("info", "Processing token_hash-based email verification", { type: type });
-            
-            try {
-              // Supabase JS SDK automatically handles token_hash in the URL
-              // We just need to call getSession() which will exchange the token_hash
-              log("info", "Attempting to verify using token_hash");
-              const { data, error: sessionError } = await supabase.auth.getSession();
+            // This is the documented PKCE signup confirmation flow using token_hash
+            log("info", "Processing token_hash-based email verification", { type });
 
-              if (sessionError) {
-                log("error", "Failed to get session from token_hash", { error: sessionError.message });
-                showError("Failed to verify your email. The link may be expired. Please request a new verification email from the app.");
+            try {
+              log("info", "Attempting verifyOtp with token_hash");
+              const { data, error: verifyError } = await supabase.auth.verifyOtp({
+                token_hash: token_hash,
+                type: type,
+              });
+
+              if (verifyError) {
+                log("error", "verifyOtp failed for token_hash", { error: verifyError.message });
+                showError("Failed to verify your email. The link may be expired or already used. Please request a new verification email from the app.");
                 return;
               }
 
-              if (data.session && data.session.user) {
-                log("info", "Email verification successful via token_hash", { 
-                  user: data.session.user.email,
-                  confirmed: data.session.user.email_confirmed_at 
+              if (data && data.user) {
+                log("info", "Email verification successful via token_hash verifyOtp", {
+                  user: data.user.email,
+                  confirmed: data.user.email_confirmed_at,
                 });
-                showSuccess();
-                setTimeout(() => tryOpenApp(), 2000);
               } else {
-                log("warn", "No session after token_hash verification");
-                showError("Verification incomplete. Please try logging into the app.");
+                // When Supabase returns no user, attempt to fetch the latest user state
+                log("info", "verifyOtp returned no user - checking current user");
+                const { data: userData } = await supabase.auth.getUser();
+                if (userData?.user?.email_confirmed_at) {
+                  log("info", "User already verified after token_hash flow", {
+                    user: userData.user.email,
+                  });
+                }
               }
+
+              showSuccess();
+              setTimeout(() => tryOpenApp(), 2000);
             } catch (e) {
-              log("error", "Token hash verification error", { error: e.message });
+              log("error", "Token hash verification exception", { error: e.message });
               showError("An error occurred during verification. Please try logging into the app.");
             }
           } else if (code) {
