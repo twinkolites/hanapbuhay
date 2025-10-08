@@ -59,8 +59,8 @@ class AuthService {
           'birthday': birthday,
           'role': 'applicant', // Explicitly set default role
         },
-        // GitHub Pages URL for cross-device email verification
-        emailRedirectTo: 'https://twinkolites.github.io/hanapbuhay/',
+        // GitHub Pages URL for cross-device email verification with registration type
+        emailRedirectTo: 'https://twinkolites.github.io/hanapbuhay/?registration_type=applicant',
       );
 
       if (response.user != null) {

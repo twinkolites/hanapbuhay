@@ -195,6 +195,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         if (registrationType == 'employer') {
           print('🏢 Employer email confirmation detected'); // Debug print
           _handleEmployerTokenHashVerification(tokenHash, type, email);
+        } else if (registrationType == 'applicant') {
+          print('👤 Applicant email confirmation detected'); // Debug print
+          _handleApplicantTokenHashVerification(tokenHash, type, email);
         } else {
           print('📧 Regular email confirmation detected'); // Debug print
           _handleTokenHashVerification(tokenHash, type, email);
@@ -206,6 +209,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         if (registrationType == 'employer') {
           print('🏢 Employer email confirmation detected'); // Debug print
           _handleEmployerEmailConfirmation(accessToken, refreshToken);
+        } else if (registrationType == 'applicant') {
+          print('👤 Applicant email confirmation detected'); // Debug print
+          _handleApplicantEmailConfirmation(accessToken, refreshToken);
         } else {
           print('📧 Regular email confirmation detected'); // Debug print
           _handleEmailConfirmation(accessToken, refreshToken);
@@ -348,6 +354,177 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('OK', style: TextStyle(color: Color(0xFF4CA771))),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _handleApplicantTokenHashVerification(String tokenHash, String type, String? email) async {
+    print('👤 Handling applicant token hash verification'); // Debug print
+
+    try {
+      final supabase = Supabase.instance.client;
+      
+      // Verify the email confirmation using token hash
+      final response = await supabase.auth.verifyOTP(
+        tokenHash: tokenHash,
+        type: OtpType.email,
+      );
+
+      if (response.user != null) {
+        print('✅ Applicant email confirmed successfully via token hash'); // Debug print
+        
+        // Show success toast and navigate to login screen
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final context = _navigatorKey.currentContext;
+          if (context != null) {
+            _showApplicantAccountCreatedSuccess(context);
+          }
+        });
+      } else {
+        print('❌ Applicant email confirmation failed - no user returned'); // Debug print
+      }
+    } catch (e) {
+      print('❌ Error confirming applicant email via token hash: $e'); // Debug print
+      
+      // Show error message
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final context = _navigatorKey.currentContext;
+        if (context != null) {
+          _showEmailConfirmationError(context, e.toString());
+        }
+      });
+    }
+  }
+
+  void _handleApplicantEmailConfirmation(String accessToken, String? refreshToken) {
+    print('👤 Handling applicant email confirmation'); // Debug print
+
+    // Set the session manually
+    supabase.auth
+        .setSession(accessToken)
+        .then((_) {
+          print('✅ Applicant session set successfully'); // Debug print
+
+          // Show success toast and navigate to login screen
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            final context = _navigatorKey.currentContext;
+            if (context != null) {
+              _showApplicantAccountCreatedSuccess(context);
+            }
+          });
+        })
+        .catchError((error) {
+          print('❌ Error setting applicant session: $error'); // Debug print
+
+          // Show error message
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            final context = _navigatorKey.currentContext;
+            if (context != null) {
+              _showEmailConfirmationError(context, error.toString());
+            }
+          });
+        });
+  }
+
+  void _showApplicantAccountCreatedSuccess(BuildContext context) {
+    // Show success toast first
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.white, size: 20),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Account created successfully! Email verified.',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: const Color(0xFF4CA771),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+        duration: const Duration(seconds: 3),
+        margin: const EdgeInsets.all(16),
+      ),
+    );
+    
+    // Then show the dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Welcome to Hanapbuhay!',
+          style: TextStyle(
+            color: Color(0xFF013237),
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Your account has been successfully created and verified!',
+              style: TextStyle(
+                color: Color(0xFF013237),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'You can now sign in and start exploring job opportunities.',
+              style: TextStyle(color: Color(0xFF013237), fontSize: 14),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEAF9E7),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFC0E6BA), width: 1),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.work, color: Color(0xFF4CA771), size: 20),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Start browsing jobs and apply for positions that match your skills.',
+                      style: TextStyle(color: Color(0xFF013237), fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (context) => const LoginScreen()),
+              );
+            },
+            child: const Text(
+              'Sign In',
+              style: TextStyle(
+                color: Color(0xFF4CA771),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
         ],
       ),
