@@ -407,18 +407,40 @@
               const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
 
               if (exchangeError) {
-                log("error", "exchangeCodeForSession failed", { error: exchangeError.message });
-                
-                // Check if user is already verified
-                const { data: { user } } = await supabase.auth.getUser();
-                if (user && user.email_confirmed_at) {
-                  log("info", "User is already verified");
-                  showSuccess();
-                  setTimeout(() => tryOpenApp(), 2000);
+                log("warn", "exchangeCodeForSession failed", { error: exchangeError.message });
+
+                // Fallback: try verifyOtp with signup type (works for email confirmations)
+                log("info", "Attempting verifyOtp fallback with type 'signup'");
+                const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
+                  token: code,
+                  type: "signup",
+                });
+
+                if (verifyError) {
+                  log("error", "PKCE verification and verifyOtp fallback failed", {
+                    pkceError: exchangeError.message,
+                    verifyOtpError: verifyError.message,
+                  });
+
+                  // Check if user is already verified by fetching user status
+                  const { data: { user } } = await supabase.auth.getUser();
+                  if (user && user.email_confirmed_at) {
+                    log("info", "User is already verified despite verification errors");
+                    showSuccess();
+                    setTimeout(() => tryOpenApp(), 2000);
+                    return;
+                  }
+
+                  showError("Failed to verify your email. The verification code may be expired or invalid. Please try requesting a new verification email from the app.");
                   return;
                 }
-                
-                showError("Failed to verify your email. The verification code may be expired or invalid. Please try logging into the app - your email might already be verified.");
+
+                log("info", "Email verification successful via verifyOtp fallback", {
+                  user: verifyData?.user?.email,
+                });
+
+                showSuccess();
+                setTimeout(() => tryOpenApp(), 2000);
                 return;
               }
 
