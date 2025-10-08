@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../models/employer_registration_data.dart';
@@ -47,6 +49,8 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
   bool _isLoading = false;
   bool _isEmailVerified = false;
   String? _verificationEmail;
+  Timer? _verificationCheckTimer;
+  StreamSubscription<AuthState>? _authSubscription;
 
   // Color palette
   static const Color mediumSeaGreen = Color(0xFF4CA771);
@@ -105,11 +109,33 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
     // Check email verification status on app resume
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkEmailVerification();
+      _startEmailVerificationListener();
+    });
+
+    _authSubscription = Supabase.instance.client.auth.onAuthStateChange.listen((AuthState data) {
+      final session = data.session;
+      final user = session?.user;
+
+      if (user != null && user.emailConfirmedAt != null) {
+        _handleEmailVerificationSuccess(user.email);
+      }
+
+      if (data.event == AuthChangeEvent.signedOut) {
+        _stopEmailVerificationListener();
+        if (mounted) {
+          setState(() {
+            _isEmailVerified = false;
+            _verificationEmail = null;
+          });
+        }
+      }
     });
   }
 
   @override
   void dispose() {
+    _verificationCheckTimer?.cancel();
+    _authSubscription?.cancel();
     _animationController.dispose();
     super.dispose();
   }
@@ -121,6 +147,11 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
       if (_verificationEmail != newData.email) {
         _isEmailVerified = false;
         _verificationEmail = newData.email;
+        if (newData.email.isNotEmpty) {
+          _startEmailVerificationListener();
+        } else {
+          _stopEmailVerificationListener();
+        }
       }
     });
   }
@@ -152,6 +183,7 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
         );
         
         _showEmailVerificationDialog();
+        _startEmailVerificationListener();
         setState(() => _isLoading = false);
       } on AuthException catch (e) {
         // If user already exists, use resend method
@@ -166,6 +198,7 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
           );
           
           _showEmailVerificationDialog();
+          _startEmailVerificationListener();
           setState(() => _isLoading = false);
         } else {
           throw e; // Re-throw if it's a different error
@@ -262,20 +295,58 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
 
   Future<void> _checkEmailVerification() async {
     // Check if user is authenticated and email is confirmed
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user != null && user.emailConfirmedAt != null && !_isEmailVerified) {
-      setState(() {
-        _isEmailVerified = true;
-        _verificationEmail = user.email;
-      });
-      
-      if (mounted) {
-        SafeSnackBar.showSuccess(
-          context,
-          message: 'Email verified successfully! You can now proceed.',
-        );
+    try {
+      final response = await Supabase.instance.client.auth.getUser();
+      final user = response.user;
+
+      if (user != null && user.emailConfirmedAt != null && !_isEmailVerified) {
+        _handleEmailVerificationSuccess(user.email);
       }
+    } catch (error) {
+      // Silently ignore fetch errors (network/offline)
+      debugPrint('⚠️ Email verification check failed: $error');
     }
+  }
+
+  void _startEmailVerificationListener() {
+    if (_isEmailVerified) {
+      return;
+    }
+
+    _verificationCheckTimer?.cancel();
+    _verificationCheckTimer = Timer.periodic(const Duration(seconds: 6), (_) {
+      if (!_isEmailVerified) {
+        _checkEmailVerification();
+      } else {
+        _verificationCheckTimer?.cancel();
+      }
+    });
+
+    // Kick off an immediate check so the first update isn't delayed
+    _checkEmailVerification();
+  }
+
+  void _stopEmailVerificationListener() {
+    _verificationCheckTimer?.cancel();
+    _verificationCheckTimer = null;
+  }
+
+  void _handleEmailVerificationSuccess(String? email) {
+    _stopEmailVerificationListener();
+
+    if (!mounted || _isEmailVerified) {
+      return;
+    }
+
+    setState(() {
+      _isEmailVerified = true;
+      _verificationEmail = email ?? _verificationEmail;
+    });
+
+    SafeSnackBar.showSuccess(
+      context,
+      message: 'Email verified successfully! You can now proceed.',
+    );
   }
 
   void _nextStep() {
