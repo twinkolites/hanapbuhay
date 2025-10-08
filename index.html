@@ -409,63 +409,111 @@
 
           // Handle different verification scenarios
           if (token_hash && type) {
-            // This is the documented PKCE signup confirmation flow using token_hash
-            log("info", "Processing token_hash-based email verification", { type });
-
-            try {
-              log("info", "Attempting verifyOtp with token_hash");
-              const { data, error: verifyError } = await supabase.auth.verifyOtp({
-                token_hash: token_hash,
-                type: type,
-              });
-
-              if (verifyError) {
-                log("error", "verifyOtp failed for token_hash", { error: verifyError.message });
-                showError("Failed to verify your email. The link may be expired or already used. Please request a new verification email from the app.");
-                return;
-              }
-
-              if (data && data.user) {
-                log("info", "Email verification successful via token_hash verifyOtp", {
-                  user: data.user.email,
-                  confirmed: data.user.email_confirmed_at,
-                });
-                
-                // Get the session after successful verification
-                if (data.session) {
-                  log("info", "Session available from verifyOtp response");
-                  // Check user metadata to determine registration type
-                  await checkUserRegistrationType();
-                  showSuccess();
-                  // Pass the session tokens to the app instead of the expired token_hash
-                  setTimeout(() => tryOpenAppWithSession(data.session), 2000);
-                  return;
-                }
-              } else {
-                // When Supabase returns no user, attempt to fetch the latest user state
-                log("info", "verifyOtp returned no user - checking current user");
-                const { data: userData } = await supabase.auth.getUser();
-                if (userData?.user?.email_confirmed_at) {
-                  log("info", "User already verified after token_hash flow", {
-                    user: userData.user.email,
-                  });
-                }
-              }
-
-              // Check user metadata to determine registration type
-              await checkUserRegistrationType();
-              showSuccess();
-              // Fallback: try getting current session
-              const { data: sessionData } = await supabase.auth.getSession();
-              if (sessionData?.session) {
-                setTimeout(() => tryOpenAppWithSession(sessionData.session), 2000);
-              } else {
-                setTimeout(() => tryOpenApp(), 2000);
-              }
-            } catch (e) {
-              log("error", "Token hash verification exception", { error: e.message });
-              showError("An error occurred during verification. Please try logging into the app.");
+            // Smart detection: Try to open app first, if it fails, verify on web
+            log("info", "Detected token_hash - attempting smart verification", { type });
+            
+            // Build app URL with token_hash for app-side verification
+            let appUrl = "io.supabase.hanapbuhay://login-callback";
+            const params = new URLSearchParams();
+            
+            if (registrationType) params.set('registration_type', registrationType);
+            if (token_hash) params.set('token_hash', token_hash);
+            if (type) params.set('type', type);
+            if (emailIdentifier) params.set('email', emailIdentifier);
+            
+            if (params.toString()) {
+              appUrl += '?' + params.toString();
             }
+            
+            log("info", "Attempting to open app with token_hash", { 
+              appUrl: appUrl.substring(0, 80) + '...' 
+            });
+            
+            // Track if app opened successfully
+            let appOpened = false;
+            
+            // Try to open the app
+            window.location.href = appUrl;
+            
+            // If app doesn't open within 2 seconds, assume it's not installed and verify on web
+            setTimeout(async () => {
+              if (!appOpened && !document.hidden) {
+                // App didn't open - user likely doesn't have app installed or is on different device
+                log("info", "App didn't open - verifying on web instead");
+                
+                try {
+                  // Verify the token on web
+                  const { data, error: verifyError } = await supabase.auth.verifyOtp({
+                    token_hash: token_hash,
+                    type: type,
+                  });
+
+                  if (verifyError) {
+                    log("error", "Web verification failed", { error: verifyError.message });
+                    showError("Failed to verify your email. The link may be expired or already used. Please request a new verification email from the app.");
+                    return;
+                  }
+
+                  if (data && data.user) {
+                    log("info", "Email verified successfully on web", {
+                      user: data.user.email,
+                      confirmed: data.user.email_confirmed_at,
+                    });
+                    
+                    // Show success message with app download prompt
+                    showSuccess();
+                    setTimeout(() => {
+                      document.getElementById('verification-message').innerHTML = `
+                        <div style="text-align: center; padding: 20px;">
+                          <div style="background: #4CA771; color: white; padding: 15px; border-radius: 12px; margin-bottom: 20px;">
+                            <h2 style="margin: 0 0 10px 0; font-size: 24px;">✓ Email Verified!</h2>
+                            <p style="margin: 0; font-size: 14px;">Your account has been successfully verified.</p>
+                          </div>
+                          <p style="font-size: 16px; margin-bottom: 20px; color: #013237;">
+                            <strong>Ready to get started?</strong>
+                          </p>
+                          <p style="font-size: 14px; color: #666; margin-bottom: 30px;">
+                            Download the HanapBuhay app to access your account and start your job search journey!
+                          </p>
+                          <div style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap;">
+                            <a href="https://play.google.com/store" target="_blank" style="display: inline-block; padding: 12px 24px; background: #4CA771; color: white; text-decoration: none; border-radius: 8px; font-weight: 600;">
+                              📱 Download for Android
+                            </a>
+                            <a href="https://apps.apple.com" target="_blank" style="display: inline-block; padding: 12px 24px; background: #4CA771; color: white; text-decoration: none; border-radius: 8px; font-weight: 600;">
+                              📱 Download for iOS
+                            </a>
+                          </div>
+                          <p style="font-size: 12px; color: #999; margin-top: 20px;">
+                            Already have the app? Open it and sign in with your email.
+                          </p>
+                        </div>
+                      `;
+                    }, 1000);
+                  }
+                } catch (e) {
+                  log("error", "Web verification exception", { error: e.message });
+                  showError("An error occurred during verification. Please try again or contact support.");
+                }
+              }
+            }, 2000);
+            
+            // Detect if user switches back to the page (app didn't open)
+            document.addEventListener('visibilitychange', () => {
+              if (!document.hidden) {
+                appOpened = false;
+              }
+            });
+            
+            // If page becomes visible again quickly, app probably didn't open
+            window.addEventListener('blur', () => {
+              setTimeout(() => {
+                if (!document.hidden) {
+                  appOpened = false;
+                }
+              }, 100);
+            });
+            
+            return;
           } else if (code) {
             // This is from signUp() - PKCE flow
             log("info", "Processing code-based email verification (PKCE)", { code: code.substring(0, 8) + "..." });

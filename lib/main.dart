@@ -661,64 +661,90 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
 
-  void _handleEmployerEmailConfirmation(String accessToken, String? refreshToken) {
+  void _handleEmployerEmailConfirmation(String accessToken, String? refreshToken) async {
     print('🏢 Handling employer email confirmation'); // Debug print
 
-    // Set the session manually
-    supabase.auth
-        .setSession(accessToken)
-        .then((_) {
-          print('✅ Employer session set successfully'); // Debug print
+    try {
+      if (refreshToken == null || refreshToken.isEmpty) {
+        throw Exception('Refresh token is required but not provided');
+      }
+      
+      // Try using refreshSession instead, which explicitly takes a refresh token
+      // and returns a new session
+      print('🔑 Refreshing session using refresh token');
+      print('🔑 Refresh token: ${refreshToken.substring(0, 10)}...');
+      
+      final response = await supabase.auth.refreshSession();
+      final session = response.session;
+      
+      if (session == null) {
+        throw Exception('Failed to refresh session - session is null');
+      }
+      
+      print('✅ Employer session refreshed successfully'); // Debug print
+      print('✅ User: ${session.user.email}');
 
-          // Show success message and navigate to employer registration screen
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            final context = _navigatorKey.currentContext;
-            if (context != null) {
-              _showEmployerEmailConfirmationSuccess(context);
-            }
-          });
-        })
-        .catchError((error) {
-          print('❌ Error setting employer session: $error'); // Debug print
+      // Show success message and navigate to employer registration screen
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final context = _navigatorKey.currentContext;
+        if (context != null) {
+          _showEmployerEmailConfirmationSuccess(context);
+        }
+      });
+    } catch (error) {
+      print('❌ Error setting employer session: $error'); // Debug print
 
-          // Show error message
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            final context = _navigatorKey.currentContext;
-            if (context != null) {
-              _showEmailConfirmationError(context, error.toString());
-            }
-          });
-        });
+      // Show error message
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final context = _navigatorKey.currentContext;
+        if (context != null) {
+          _showEmailConfirmationError(context, error.toString());
+        }
+      });
+    }
   }
 
-  void _handleEmailConfirmation(String accessToken, String? refreshToken) {
+  void _handleEmailConfirmation(String accessToken, String? refreshToken) async {
     print('✅ Handling email confirmation'); // Debug print
 
-    // Set the session manually
-    supabase.auth
-        .setSession(accessToken)
-        .then((_) {
-          print('✅ Session set successfully'); // Debug print
+    try {
+      if (refreshToken == null || refreshToken.isEmpty) {
+        throw Exception('Refresh token is required but not provided');
+      }
+      
+      // According to Supabase docs, setSession accepts ONLY the refresh token string
+      // It will use the refresh token to fetch a new session
+      print('🔑 Setting session using refresh token');
+      print('🔑 Refresh token: ${refreshToken.substring(0, 10)}...');
+      
+      final response = await supabase.auth.setSession(refreshToken);
+      final session = response.session;
+      
+      if (session == null) {
+        throw Exception('Failed to set session - session is null');
+      }
+      
+      print('✅ Session set successfully'); // Debug print
+      print('✅ User: ${session.user.email}');
 
-          // Show success message and navigate to appropriate screen
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            final context = _navigatorKey.currentContext;
-            if (context != null) {
-              _showEmailConfirmationSuccess(context);
-            }
-          });
-        })
-        .catchError((error) {
-          print('❌ Error setting session: $error'); // Debug print
+      // Show success message and navigate to appropriate screen
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final context = _navigatorKey.currentContext;
+        if (context != null) {
+          _showEmailConfirmationSuccess(context);
+        }
+      });
+    } catch (error) {
+      print('❌ Error setting session: $error'); // Debug print
 
-          // Show error message
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            final context = _navigatorKey.currentContext;
-            if (context != null) {
-              _showEmailConfirmationError(context, error.toString());
-            }
-          });
-        });
+      // Show error message
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final context = _navigatorKey.currentContext;
+        if (context != null) {
+          _showEmailConfirmationError(context, error.toString());
+        }
+      });
+    }
   }
 
   void _showEmployerEmailConfirmationSuccess(BuildContext context) {
