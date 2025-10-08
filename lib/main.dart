@@ -5,6 +5,7 @@ import 'package:app_links/app_links.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'providers/auth_provider.dart';
 import 'screens/login_screen.dart';
+import 'screens/register_screen.dart';
 import 'screens/applicant/home_screen.dart';
 import 'screens/employer/home_screen.dart';
 import 'screens/admin/admin_dashboard_screen.dart';
@@ -597,13 +598,24 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     } catch (e) {
       print('❌ Error confirming regular email via token hash: $e'); // Debug print
       
-      // Show error message
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        final context = _navigatorKey.currentContext;
-        if (context != null) {
-          _showEmailConfirmationError(context, e.toString());
-        }
-      });
+      // Handle specific error cases
+      if (e.toString().contains('otp_expired') || e.toString().contains('Email link is invalid')) {
+        // Show expired link dialog with options
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final context = _navigatorKey.currentContext;
+          if (context != null) {
+            _showExpiredLinkDialog(context, email);
+          }
+        });
+      } else {
+        // Show generic error message
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final context = _navigatorKey.currentContext;
+          if (context != null) {
+            _showEmailConfirmationError(context, e.toString());
+          }
+        });
+      }
     }
   }
 
@@ -808,6 +820,140 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               style: TextStyle(
                 color: Color(0xFF4CA771),
                 fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showExpiredLinkDialog(BuildContext context, String? email) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Verification Link Expired',
+          style: TextStyle(
+            color: Color(0xFF013237),
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF3E0),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFFFCC80), width: 1),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.warning_amber,
+                    color: const Color(0xFFE65100),
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'This verification link has expired or has already been used.',
+                      style: TextStyle(
+                        color: const Color(0xFFE65100),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Don\'t worry! You can still complete your registration by signing in with your email and password.',
+              style: TextStyle(
+                color: const Color(0xFF013237),
+                fontSize: 14,
+              ),
+            ),
+            if (email != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                'Email: $email',
+                style: TextStyle(
+                  color: const Color(0xFF013237),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEAF9E7),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFC0E6BA), width: 1),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, color: const Color(0xFF4CA771), size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'If you haven\'t created an account yet, please register first.',
+                      style: TextStyle(
+                        color: const Color(0xFF013237),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (context) => const RegisterScreen()),
+              );
+            },
+            child: const Text(
+              'Register',
+              style: TextStyle(
+                color: Color(0xFF4CA771),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (context) => const LoginScreen()),
+              );
+            },
+            child: const Text(
+              'Sign In',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF4CA771),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
               ),
             ),
           ),
