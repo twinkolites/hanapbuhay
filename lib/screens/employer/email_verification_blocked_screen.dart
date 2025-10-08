@@ -64,10 +64,13 @@ class _EmailVerificationBlockedScreenState extends State<EmailVerificationBlocke
     try {
       // Use the correct Supabase auth.resend() method with OtpType.signup
       // This is the proper way according to Supabase Flutter documentation (2024/2025)
+      final normalizedEmail = widget.email.trim().toLowerCase();
+      final emailRedirectUrl = 'https://twinkolites.github.io/hanapbuhay/?email=${Uri.encodeComponent(normalizedEmail)}';
+
       await _supabase.auth.resend(
         type: OtpType.signup,
-        email: widget.email,
-        emailRedirectTo: 'https://twinkolites.github.io/hanapbuhay/',
+        email: normalizedEmail,
+        emailRedirectTo: emailRedirectUrl,
       );
 
       // The resend method in newer Supabase SDK doesn't return errors in the traditional way

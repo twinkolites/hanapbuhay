@@ -334,6 +334,12 @@
       const accessToken = urlParams.get("access_token");
       const refreshToken = urlParams.get("refresh_token");
       const error = urlParams.get("error");
+      const errorCode = urlParams.get("error_code");
+      const errorDescription = urlParams.get("error_description");
+      const emailFromUrl = urlParams.get("email");
+
+      // A user entity in Supabase can be linked by multiple identifiers. For web-only verification we expect either the email address passed via query string or a valid session.
+      const emailIdentifier = emailFromUrl ? sanitizeString(emailFromUrl) : null;
 
       log("info", "URL parameters parsed", {
         hasCode: !!code,
@@ -341,7 +347,9 @@
         type: type,
         hasAccessToken: !!accessToken,
         hasRefreshToken: !!refreshToken,
-        hasError: !!error
+        hasError: !!error,
+        errorCode: errorCode,
+        hasEmail: !!emailIdentifier
       });
 
       async function handleVerification() {
@@ -360,8 +368,40 @@
         try {
           // Check for errors first
           if (error) {
-            log("warn", "Verification failed with error", { error });
-            showError(`Verification failed: ${sanitizeString(error)}`);
+            log("warn", "Verification failed with error", { error, errorCode, errorDescription });
+
+            // Handle common error scenarios
+            if (errorCode === "otp_expired" && emailIdentifier) {
+              log("info", "OTP expired - attempting automatic resend", { email: emailIdentifier });
+
+              try {
+                const { error: resendError } = await supabase.auth.resend({
+                  type: "signup",
+                  email: emailIdentifier,
+                  options: {
+                    emailRedirectTo: `${window.location.origin}${window.location.pathname}?email=${encodeURIComponent(emailIdentifier)}`
+                  }
+                });
+
+                if (resendError) {
+                  log("error", "Automatic resend failed", { error: resendError.message });
+                  showError(`Verification link expired. We tried to send a new email but ran into an issue: ${sanitizeString(resendError.message)}. Please request a new verification email from the app.`);
+                } else {
+                  log("info", "Automatic resend succeeded after expired link");
+                  showError(`Your previous verification link expired. We've sent a fresh verification email to ${sanitizeString(emailIdentifier)}. Please open the new email to complete verification.`);
+                }
+              } catch (resendException) {
+                log("error", "Automatic resend exception", { error: resendException.message });
+                showError(`Verification link expired. Please request a new verification email from the app.`);
+              }
+              return;
+            }
+
+            const errorMessage = errorDescription
+              ? `Verification failed: ${sanitizeString(errorDescription)}`
+              : `Verification failed: ${sanitizeString(error)}`;
+
+            showError(errorMessage);
             return;
           }
 
@@ -411,10 +451,16 @@
 
                 // Fallback: try verifyOtp with signup type (works for email confirmations)
                 log("info", "Attempting verifyOtp fallback with type 'signup'");
-                const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
+                const verifyPayload = {
                   token: code,
                   type: "signup",
-                });
+                };
+
+                if (emailIdentifier) {
+                  verifyPayload.email = emailIdentifier;
+                }
+
+                const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp(verifyPayload);
 
                 if (verifyError) {
                   log("error", "PKCE verification and verifyOtp fallback failed", {
@@ -422,8 +468,8 @@
                     verifyOtpError: verifyError.message,
                   });
 
-                  // Check if user is already verified by fetching user status
-                  const { data: { user } } = await supabase.auth.getUser();
+                // Check if user is already verified by fetching user status
+                const { data: { user } } = await supabase.auth.getUser();
                   if (user && user.email_confirmed_at) {
                     log("info", "User is already verified despite verification errors");
                     showSuccess();

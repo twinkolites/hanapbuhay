@@ -139,14 +139,16 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
     try {
       // First, try to sign up the user to create an account
       final supabase = Supabase.instance.client;
+      final normalizedEmail = _registrationData.email.trim().toLowerCase();
+      final emailRedirectUrl = 'https://twinkolites.github.io/hanapbuhay/?email=${Uri.encodeComponent(normalizedEmail)}';
       
       try {
         await supabase.auth.signUp(
-          email: _registrationData.email,
+          email: normalizedEmail,
           password: _registrationData.password.isNotEmpty 
               ? _registrationData.password 
               : 'temp_${DateTime.now().millisecondsSinceEpoch}',
-          emailRedirectTo: 'https://twinkolites.github.io/hanapbuhay/',
+          emailRedirectTo: emailRedirectUrl,
         );
         
         _showEmailVerificationDialog();
@@ -159,8 +161,8 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
           // Use the proper resend method for existing users
           await supabase.auth.resend(
             type: OtpType.signup,
-            email: _registrationData.email,
-            emailRedirectTo: 'https://twinkolites.github.io/hanapbuhay/',
+            email: normalizedEmail,
+            emailRedirectTo: emailRedirectUrl,
           );
           
           _showEmailVerificationDialog();
