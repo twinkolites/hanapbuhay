@@ -640,7 +640,7 @@ class _BookMeetingScreenState extends State<BookMeetingScreen> {
         ),
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
-          value: value,
+          initialValue: value,
           items: [
             DropdownMenuItem<String>(
               value: null,
@@ -714,8 +714,37 @@ class _BookMeetingScreenState extends State<BookMeetingScreen> {
     final time = await showTimePicker(
       context: context,
       initialTime: _selectedStartTime ?? const TimeOfDay(hour: 9, minute: 0),
+      builder: (context, child) {
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: false),
+          child: child!,
+        );
+      },
     );
+    
     if (time != null) {
+      // Validate: If selecting today's date, prevent past times
+      if (_selectedDate != null) {
+        final now = DateTime.now();
+        final selectedDateTime = DateTime(
+          _selectedDate!.year,
+          _selectedDate!.month,
+          _selectedDate!.day,
+          time.hour,
+          time.minute,
+        );
+        
+        if (selectedDateTime.isBefore(now)) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Cannot select a time in the past'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      }
+      
       setState(() => _selectedStartTime = time);
     }
   }
@@ -724,8 +753,37 @@ class _BookMeetingScreenState extends State<BookMeetingScreen> {
     final time = await showTimePicker(
       context: context,
       initialTime: _selectedEndTime ?? const TimeOfDay(hour: 10, minute: 0),
+      builder: (context, child) {
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: false),
+          child: child!,
+        );
+      },
     );
+    
     if (time != null) {
+      // Validate: If selecting today's date, prevent past times
+      if (_selectedDate != null) {
+        final now = DateTime.now();
+        final selectedDateTime = DateTime(
+          _selectedDate!.year,
+          _selectedDate!.month,
+          _selectedDate!.day,
+          time.hour,
+          time.minute,
+        );
+        
+        if (selectedDateTime.isBefore(now)) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Cannot select a time in the past'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      }
+      
       setState(() => _selectedEndTime = time);
     }
   }

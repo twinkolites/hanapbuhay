@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:provider/provider.dart';
 import 'package:app_links/app_links.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'providers/auth_provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
@@ -11,12 +12,20 @@ import 'screens/employer/home_screen.dart';
 import 'screens/admin/admin_dashboard_screen.dart';
 import 'screens/applicant/job_preferences_screen.dart';
 import 'screens/employer/employer_registration_screen.dart';
+import 'screens/employer/employer_application_status_screen.dart';
+import 'screens/account_suspended_screen.dart';
 import 'config/app_config.dart';
 import 'services/ai_screening_service.dart';
 import 'services/job_recommendation_service.dart';
 import 'services/stay_signed_in_service.dart';
+import 'services/onesignal_notification_service.dart';
 import 'dart:async';
-import 'package:flutter/services.dart';
+// Calendar screens
+import 'screens/employer/calendar_screen.dart';
+import 'screens/employer/availability_settings_screen.dart';
+import 'screens/employer/schedule_meeting_screen.dart';
+import 'screens/applicant/calendar_screen.dart';
+import 'screens/applicant/book_meeting_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -44,6 +53,12 @@ Future<void> main() async {
   
   // Initialize Job Recommendation Service
   JobRecommendationService.initialize();
+  
+  // Initialize ZEGOCLOUD Video Calling (only when needed)
+  // VideoCallService.initialize(); // Moved to on-demand initialization
+  
+  // Initialize OneSignal Notifications
+  await OneSignalNotificationService.initialize();
 
   // Note: Deep link handling is now done in MyApp's _setupDeepLinkHandling()
   // to avoid duplicate processing
@@ -118,10 +133,20 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       print('🔄 Auth state change: $event');
       print('🔄 Has session: ${session != null}');
       
-      // Handle successful email verification
+      // Only handle email verification events, not regular logins
+      // Regular logins are handled by the login screen itself
       if (event == AuthChangeEvent.signedIn && session != null) {
-        print('✅ User signed in via email verification');
-        _handleSuccessfulAuth(session);
+        // Check if this is from email verification (has registration_type in metadata)
+        final userMetadata = session.user.userMetadata;
+        final registrationType = userMetadata?['registration_type'] as String?;
+        
+        // Only show success dialog if this is a new registration verification
+        if (registrationType != null) {
+          print('✅ User signed in via email verification (registration type: $registrationType)');
+          _handleSuccessfulAuth(session);
+        } else {
+          print('✅ User signed in via regular login - letting login screen handle navigation');
+        }
       }
     });
 
@@ -244,11 +269,24 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     print('📝 Handling successful authentication');
     print('📝 Pending registration type: $_pendingRegistrationType');
     
+    // Try to get registration type from user metadata if pending type is null
+    final userMetadata = session.user.userMetadata;
+    final registrationType = _pendingRegistrationType ?? 
+                            userMetadata?['registration_type'] as String?;
+    
+    print('📝 Final registration type: $registrationType (from ${_pendingRegistrationType != null ? 'pending' : 'metadata'})');
+    
+    // Only proceed if we have a valid registration type
+    if (registrationType == null) {
+      print('⚠️ No registration type found - skipping success dialog');
+      return;
+    }
+    
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final context = _navigatorKey.currentContext;
       if (context == null) return;
       
-      if (_pendingRegistrationType == 'employer') {
+      if (registrationType == 'employer') {
         print('✅ Navigating to employer registration');
         _showEmployerEmailVerifiedDialog(context);
       } else {
@@ -684,23 +722,20 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       print('✅ Employer session refreshed successfully'); // Debug print
       print('✅ User: ${session.user.email}');
 
-      // Show success message and navigate to employer registration screen
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        final context = _navigatorKey.currentContext;
-        if (context != null) {
-          _showEmployerEmailConfirmationSuccess(context);
-        }
-      });
+          // Show success message and navigate to employer registration screen
+          WidgetsBinding.instance.addPostFrameCallback((_) async {
+            await _maybeShowEmployerEmailConfirmationSuccess();
+          });
     } catch (error) {
-      print('❌ Error setting employer session: $error'); // Debug print
+          print('❌ Error setting employer session: $error'); // Debug print
 
-      // Show error message
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        final context = _navigatorKey.currentContext;
-        if (context != null) {
-          _showEmailConfirmationError(context, error.toString());
-        }
-      });
+          // Show error message
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            final context = _navigatorKey.currentContext;
+            if (context != null) {
+              _showEmailConfirmationError(context, error.toString());
+            }
+        });
     }
   }
 
@@ -724,26 +759,26 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         throw Exception('Failed to set session - session is null');
       }
       
-      print('✅ Session set successfully'); // Debug print
+          print('✅ Session set successfully'); // Debug print
       print('✅ User: ${session.user.email}');
 
-      // Show success message and navigate to appropriate screen
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        final context = _navigatorKey.currentContext;
-        if (context != null) {
-          _showEmailConfirmationSuccess(context);
-        }
-      });
+          // Show success message and navigate to appropriate screen
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            final context = _navigatorKey.currentContext;
+            if (context != null) {
+              _showEmailConfirmationSuccess(context);
+            }
+          });
     } catch (error) {
-      print('❌ Error setting session: $error'); // Debug print
+          print('❌ Error setting session: $error'); // Debug print
 
-      // Show error message
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        final context = _navigatorKey.currentContext;
-        if (context != null) {
-          _showEmailConfirmationError(context, error.toString());
-        }
-      });
+          // Show error message
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            final context = _navigatorKey.currentContext;
+            if (context != null) {
+              _showEmailConfirmationError(context, error.toString());
+            }
+        });
     }
   }
 
@@ -803,16 +838,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-              // Navigate to employer registration screen
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const EmployerRegistrationScreen(),
-                ),
-              );
             },
             child: const Text(
-              'Continue Registration',
+              'OK',
               style: TextStyle(
                 color: Color(0xFF4CA771),
                 fontWeight: FontWeight.w600,
@@ -826,7 +854,22 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   // Alias for the success message when triggered from auth state change
   void _showEmployerEmailVerifiedDialog(BuildContext context) {
+    _maybeShowEmployerEmailConfirmationSuccess();
+  }
+
+  Future<void> _maybeShowEmployerEmailConfirmationSuccess() async {
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'seen_employer_email_confirmed_$userId';
+    final hasSeen = prefs.getBool(key) ?? false;
+    if (hasSeen) return;
+
+    final context = _navigatorKey.currentContext;
+    if (context == null) return;
+
     _showEmployerEmailConfirmationSuccess(context);
+    await prefs.setBool(key, true);
   }
 
   void _showEmailConfirmationSuccess(BuildContext context) {
@@ -1151,6 +1194,28 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         theme: ThemeData(primarySwatch: Colors.green),
         home: const SplashScreen(),
         debugShowCheckedModeBanner: false,
+        routes: {
+          '/employer-calendar': (context) => const EmployerCalendarScreen(),
+          '/availability-settings': (context) => const AvailabilitySettingsScreen(),
+              '/schedule-meeting': (context) {
+                final args = ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>?;
+                return ScheduleMeetingScreen(
+                  selectedDate: args?['selectedDate'] as DateTime?,
+                  applicantId: args?['applicantId'] as String?,
+                  applicantName: args?['applicantName'] as String?,
+                  jobTitle: args?['jobTitle'] as String?,
+                  jobId: args?['jobId'] as String?, // Added jobId parameter
+                  chatId: args?['chatId'] as String?,
+                );
+              },
+          '/applicant-calendar': (context) => const ApplicantCalendarScreen(),
+          '/book-meeting': (context) {
+            final args = ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>?;
+            return BookMeetingScreen(
+              selectedDate: args?['selectedDate'] as DateTime?,
+            );
+          },
+        },
       ),
     );
   }
@@ -1174,7 +1239,7 @@ class _SplashScreenState extends State<SplashScreen>
 
     // Initialize animation controller
     _animationController = AnimationController(
-      duration: const Duration(milliseconds: 1500),
+      duration: const Duration(milliseconds: 2000), // Slightly longer for session check
       vsync: this,
     );
 
@@ -1195,48 +1260,177 @@ class _SplashScreenState extends State<SplashScreen>
           ),
         );
 
-    // Start animation when screen loads
+    // Start animation and session check
+    _initializeApp();
+  }
+
+  Future<void> _initializeApp() async {
+    // Start animation
     _animationController.forward();
 
-    // Navigate to next screen after animation completes
-    _animationController.addStatusListener((status) {
-      if (status == AnimationStatus.completed) {
-        // Wait a bit then navigate to welcome screen
-        Future.delayed(const Duration(milliseconds: 1000), () {
+    // Check session in parallel with animation
+    await _checkSessionAndNavigate();
+  }
+
+  Future<void> _checkSessionAndNavigate() async {
+    try {
+      // Wait for animation to complete
+      await _animationController.forward();
+      
+      // Add a small delay for better UX
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // Check if user has a valid session
+      final hasValidSession = await StaySignedInService.validateSessionOnStartup();
+      
+      if (mounted) {
+        if (hasValidSession) {
+          // If employer and not approved, and user chose stay signed in, route to status screen
+          final user = supabase.auth.currentUser;
+          if (user != null) {
+            final shouldStay = await StaySignedInService.shouldStaySignedIn();
+            if (shouldStay) {
+              final verificationList = await supabase
+                  .from('employer_verification')
+                  .select('verification_status')
+                  .eq('employer_id', user.id)
+                  .order('submitted_at', ascending: false)
+                  .limit(1);
+              final status = verificationList.isNotEmpty ? verificationList.first['verification_status'] as String? : null;
+              if (status != null && status != 'approved') {
+                if (mounted) {
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const EmployerApplicationStatusScreen(),
+                    ),
+                  );
+                  return;
+                }
+              }
+            }
+          }
+          // Default: navigate to appropriate home screen
+          await _navigateToHomeScreen();
+        } else {
+          _navigateToLoginScreen();
+        }
+      }
+    } catch (e) {
+      print('Session check error: $e');
+      if (mounted) {
+        _navigateToLoginScreen();
+      }
+    }
+  }
+
+  Future<void> _navigateToHomeScreen() async {
+    try {
+      final user = supabase.auth.currentUser;
+      if (user != null) {
+        // Get user role and suspension status from profile
+        final profileResponse = await supabase
+            .from('profiles')
+            .select('role, is_suspended, suspension_reason')
+            .eq('id', user.id)
+            .maybeSingle();
+
+        if (profileResponse != null) {
+          final role = profileResponse['role'] as String;
+          final isSuspended = profileResponse['is_suspended'] == true;
+          final suspensionReason = profileResponse['suspension_reason'] as String?;
+          
           if (mounted) {
+            // Check if user is suspended first
+            if (isSuspended) {
+              // Navigate to suspension screen
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => AccountSuspendedScreen(
+                    reason: suspensionReason,
+                  ),
+                ),
+              );
+              return;
+            }
+            
             Navigator.pushReplacement(
               context,
               PageRouteBuilder(
                 transitionDuration: const Duration(milliseconds: 600),
-                pageBuilder: (context, animation, secondaryAnimation) =>
-                    const WelcomeScreen(),
-                transitionsBuilder:
-                    (context, animation, secondaryAnimation, child) {
-                      final slide =
-                          Tween<Offset>(
-                            begin: const Offset(0, 0.08),
-                            end: Offset.zero,
-                          ).animate(
-                            CurvedAnimation(
-                              parent: animation,
-                              curve: Curves.easeOut,
-                            ),
-                          );
-                      final fade = CurvedAnimation(
-                        parent: animation,
-                        curve: Curves.easeIn,
-                      );
-                      return FadeTransition(
-                        opacity: fade,
-                        child: SlideTransition(position: slide, child: child),
-                      );
-                    },
+                pageBuilder: (context, animation, secondaryAnimation) {
+                  switch (role) {
+                    case 'employer':
+                      return const EmployerHomeScreen();
+                    case 'applicant':
+                      return const HomeScreen(); // Applicant home screen
+                    case 'admin':
+                      return const AdminDashboardScreen();
+                    default:
+                      return const WelcomeScreen();
+                  }
+                },
+                transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                  final slide = Tween<Offset>(
+                    begin: const Offset(0, 0.08),
+                    end: Offset.zero,
+                  ).animate(CurvedAnimation(
+                    parent: animation,
+                    curve: Curves.easeOut,
+                  ));
+                  final fade = CurvedAnimation(
+                    parent: animation,
+                    curve: Curves.easeIn,
+                  );
+                  return FadeTransition(
+                    opacity: fade,
+                    child: SlideTransition(position: slide, child: child),
+                  );
+                },
               ),
             );
           }
-        });
+        } else {
+          _navigateToLoginScreen();
+        }
+      } else {
+        _navigateToLoginScreen();
       }
-    });
+    } catch (e) {
+      print('Navigation error: $e');
+      _navigateToLoginScreen();
+    }
+  }
+
+  void _navigateToLoginScreen() {
+    if (mounted) {
+      Navigator.pushReplacement(
+        context,
+        PageRouteBuilder(
+          transitionDuration: const Duration(milliseconds: 600),
+          pageBuilder: (context, animation, secondaryAnimation) =>
+              const LoginScreen(),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            final slide = Tween<Offset>(
+              begin: const Offset(0, 0.08),
+              end: Offset.zero,
+            ).animate(CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOut,
+            ));
+            final fade = CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeIn,
+            );
+            return FadeTransition(
+              opacity: fade,
+              child: SlideTransition(position: slide, child: child),
+            );
+          },
+        ),
+      );
+    }
   }
 
   @override
@@ -1264,8 +1458,8 @@ class _SplashScreenState extends State<SplashScreen>
                     opacity: _fadeAnimation,
                     child: Image.asset(
                       'assets/images/logo.png',
-                      width: 300,
-                      height: 300,
+                      width: 350,
+                      height: 350,
                       fit: BoxFit.contain,
                     ),
                   ),

@@ -918,7 +918,7 @@ class _AIInsightsPageState extends State<AIInsightsPage> with TickerProviderStat
                 ],
               ),
             ));
-            }).toList(),
+            }),
         ],
       ),
     );

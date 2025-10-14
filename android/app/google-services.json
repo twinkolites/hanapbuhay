@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "642528993157",
+    "project_id": "hanap-e2a94",
+    "storage_bucket": "hanap-e2a94.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:642528993157:android:c5e8ae4f1a0a649f7b2eec",
+        "android_client_info": {
+          "package_name": "com.example.hanapbuhay"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDlxyhbUIyQcaEPmleQvK1FHF81iJU1fQY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -5,6 +5,7 @@ import '../../services/chat_service.dart';
 import '../../services/ai_screening_service.dart';
 import 'applications_screen.dart';
 import 'chat_screen.dart';
+import 'ai_insights_page.dart';
 
 class ApplicationsOverviewScreen extends StatefulWidget {
   const ApplicationsOverviewScreen({super.key});
@@ -18,7 +19,6 @@ class _ApplicationsOverviewScreenState extends State<ApplicationsOverviewScreen>
   List<Map<String, dynamic>> _allApplications = [];
   List<Map<String, dynamic>> _aiResults = []; // Add AI results
   bool _isLoading = true;
-  bool _isAIScreening = false; // Add AI screening state
   String _selectedFilter = 'all';
   String _searchQuery = '';
 
@@ -39,6 +39,7 @@ class _ApplicationsOverviewScreenState extends State<ApplicationsOverviewScreen>
     'interview',
     'hired',
     'rejected',
+    'withdrawn',
   ];
 
   @override
@@ -84,19 +85,8 @@ class _ApplicationsOverviewScreenState extends State<ApplicationsOverviewScreen>
       final company = await JobService.getUserCompany(user.id);
       if (company == null) return;
 
-      // Get all jobs for the company
-      final jobs = await JobService.getJobsByCompany(company['id']);
-      
-      // Get applications for each job
-      List<Map<String, dynamic>> allApplications = [];
-      for (final job in jobs) {
-        final applications = await JobService.getJobApplications(job['id']);
-        for (final application in applications) {
-          // Add job info to each application
-          application['job'] = job;
-          allApplications.add(application);
-        }
-      }
+      // Use optimized stored procedure to fetch all applications with related data
+      final allApplications = await JobService.getCompanyApplicationsOptimized(company['id']);
 
       setState(() {
         _allApplications = allApplications;
@@ -135,65 +125,32 @@ class _ApplicationsOverviewScreenState extends State<ApplicationsOverviewScreen>
     }
   }
 
-  Future<void> _screenAllApplications() async {
-    setState(() {
-      _isAIScreening = true;
+  void _navigateToAIInsights() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const AIInsightsPage(),
+      ),
+    ).then((_) {
+      // Reload data when returning from AI Insights
+      _loadApplications();
+      _loadAIScreeningResults();
     });
-
-    try {
-      final user = _supabase.auth.currentUser;
-      if (user == null) return;
-
-      // Get user's company
-      final company = await JobService.getUserCompany(user.id);
-      if (company == null) return;
-
-      // Get all jobs for the company
-      final jobs = await JobService.getJobsByCompany(company['id']);
-      
-      int totalProcessed = 0;
-      for (final job in jobs) {
-        final results = await AIScreeningService.screenAllApplications(job['id']);
-        totalProcessed += results.length;
-      }
-      
-      // Reload results after screening
-      await _loadAIScreeningResults();
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('AI screening completed! Processed $totalProcessed applications.'),
-            backgroundColor: mediumSeaGreen,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error during AI screening: $e'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-          ),
-        );
-      }
-    } finally {
-      setState(() {
-        _isAIScreening = false;
-      });
-    }
   }
 
   Map<String, dynamic>? _getAIResult(String applicationId) {
     try {
+      // First check if AI data is already embedded in the application
+      final application = _allApplications.firstWhere(
+        (app) => app['id'] == applicationId,
+        orElse: () => {},
+      );
+      
+      if (application['ai_screening'] != null) {
+        return application['ai_screening'];
+      }
+      
+      // Fallback to separate AI results list
       return _aiResults.firstWhere(
         (result) => result['application_id'] == applicationId,
       );
@@ -367,17 +324,11 @@ class _ApplicationsOverviewScreenState extends State<ApplicationsOverviewScreen>
               Expanded(
                 flex: 2,
                 child: ElevatedButton.icon(
-                  onPressed: _isAIScreening ? null : _screenAllApplications,
-                  icon: _isAIScreening 
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.auto_awesome, size: 16),
-                  label: Text(
-                    _isAIScreening ? 'Screening...' : 'AI Screening',
-                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  onPressed: _navigateToAIInsights,
+                  icon: const Icon(Icons.auto_awesome, size: 16),
+                  label: const Text(
+                    'AI Screening',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                   ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: mediumSeaGreen,
@@ -651,21 +602,26 @@ class _ApplicationsOverviewScreenState extends State<ApplicationsOverviewScreen>
     final profileCompleteness = application['profile_completeness_score'] ?? 0;
     final applicationSource = application['application_source'] ?? 'direct';
     final employerRating = application['employer_rating'];
+    final isWithdrawn = status == 'withdrawn';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: isWithdrawn ? Colors.grey.shade50 : Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: paleGreen.withValues(alpha: 0.3),
-          width: 1,
+          color: isWithdrawn 
+              ? Colors.grey.withValues(alpha: 0.4)
+              : paleGreen.withValues(alpha: 0.3),
+          width: isWithdrawn ? 2 : 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: darkTeal.withValues(alpha: 0.03),
-            blurRadius: 4,
+            color: isWithdrawn 
+                ? Colors.grey.withValues(alpha: 0.08)
+                : darkTeal.withValues(alpha: 0.03),
+            blurRadius: isWithdrawn ? 2 : 4,
             offset: const Offset(0, 1),
           ),
         ],
@@ -673,6 +629,51 @@ class _ApplicationsOverviewScreenState extends State<ApplicationsOverviewScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Withdrawal Indicator (if withdrawn)
+          if (isWithdrawn) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: Colors.orange.withValues(alpha: 0.3),
+                  width: 1,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.warning_amber_rounded,
+                    color: Colors.orange.shade700,
+                    size: 12,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Application Withdrawn',
+                      style: TextStyle(
+                        color: Colors.orange.shade800,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  if (application['withdrawn_at'] != null)
+                    Text(
+                      _formatDate(application['withdrawn_at']),
+                      style: TextStyle(
+                        color: Colors.orange.shade600,
+                        fontSize: 9,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+          
           // Header row with avatar, name, email, and status
           Row(
             children: [
@@ -696,13 +697,26 @@ class _ApplicationsOverviewScreenState extends State<ApplicationsOverviewScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      applicantName,
-                      style: const TextStyle(
-                        color: darkTeal,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
+                    Row(
+                      children: [
+                        Text(
+                          applicantName,
+                          style: TextStyle(
+                            color: isWithdrawn ? Colors.grey.shade600 : darkTeal,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            decoration: isWithdrawn ? TextDecoration.lineThrough : TextDecoration.none,
+                          ),
+                        ),
+                        if (isWithdrawn) ...[
+                          const SizedBox(width: 6),
+                          Icon(
+                            Icons.cancel_outlined,
+                            color: Colors.grey.shade500,
+                            size: 12,
+                          ),
+                        ],
+                      ],
                     ),
                     Text(
                       profiles?['email'] ?? '',
@@ -774,6 +788,43 @@ class _ApplicationsOverviewScreenState extends State<ApplicationsOverviewScreen>
               ),
             ],
           ),
+          
+          // Withdrawal reason (if withdrawn)
+          if (status == 'withdrawn' && application['withdrawal_reason'] != null && application['withdrawal_reason'].toString().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.grey.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: Colors.grey.withValues(alpha: 0.2),
+                  width: 1,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    color: Colors.grey.shade600,
+                    size: 12,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Withdrawn: ${application['withdrawal_reason']}',
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        fontSize: 10,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           
           // Compact info row with AI score, profile completeness, and source
           const SizedBox(height: 6),
@@ -880,18 +931,31 @@ class _ApplicationsOverviewScreenState extends State<ApplicationsOverviewScreen>
               
               // Chat button
               Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: () => _startChatWithApplicant(application, job),
-                  icon: const Icon(Icons.chat, size: 12),
-                  label: const Text('Chat', style: TextStyle(fontSize: 11)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: darkTeal,
-                    foregroundColor: Colors.white,
+                child: OutlinedButton.icon(
+                  onPressed: isWithdrawn ? null : () => _startChatWithApplicant(application, job),
+                  icon: Icon(
+                    Icons.chat, 
+                    size: 12,
+                    color: isWithdrawn ? Colors.grey.shade400 : darkTeal,
+                  ),
+                  label: Text(
+                    'Chat', 
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isWithdrawn ? Colors.grey.shade400 : darkTeal,
+                    ),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: isWithdrawn ? Colors.grey.shade100 : Colors.transparent,
+                    side: BorderSide(
+                      color: isWithdrawn 
+                          ? Colors.grey.withValues(alpha: 0.4)
+                          : darkTeal
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(6),
                     ),
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                    elevation: 0,
                   ),
                 ),
               ),
@@ -925,14 +989,18 @@ class _ApplicationsOverviewScreenState extends State<ApplicationsOverviewScreen>
     switch (status) {
       case 'applied':
         return mediumSeaGreen;
-      case 'shortlisted':
+      case 'under_review':
         return Colors.orange;
-      case 'interview':
+      case 'shortlisted':
         return Colors.blue;
+      case 'interview':
+        return Colors.purple;
       case 'hired':
         return Colors.green;
       case 'rejected':
         return Colors.red;
+      case 'withdrawn':
+        return Colors.grey;
       default:
         return darkTeal;
     }
@@ -942,6 +1010,8 @@ class _ApplicationsOverviewScreenState extends State<ApplicationsOverviewScreen>
     switch (status) {
       case 'applied':
         return 'Applied';
+      case 'under_review':
+        return 'Under Review';
       case 'shortlisted':
         return 'Shortlisted';
       case 'interview':
@@ -950,6 +1020,8 @@ class _ApplicationsOverviewScreenState extends State<ApplicationsOverviewScreen>
         return 'Hired';
       case 'rejected':
         return 'Rejected';
+      case 'withdrawn':
+        return 'Withdrawn';
       default:
         return status.toUpperCase();
     }
@@ -1309,7 +1381,7 @@ class _ApplicationsOverviewScreenState extends State<ApplicationsOverviewScreen>
               ),
               const Spacer(),
               Text(
-                '${score}/10',
+                '$score/10',
                 style: TextStyle(
                   color: _getScoreColor(score),
                   fontSize: 13,
@@ -1501,6 +1573,28 @@ class _ApplicationsOverviewScreenState extends State<ApplicationsOverviewScreen>
         return source.split('_').map((word) => 
           word[0].toUpperCase() + word.substring(1)
         ).join(' ');
+    }
+  }
+
+  String _formatDate(String? dateString) {
+    if (dateString == null) return 'Unknown date';
+    
+    try {
+      final date = DateTime.parse(dateString);
+      final now = DateTime.now();
+      final difference = now.difference(date);
+      
+      if (difference.inDays == 0) {
+        return 'Today';
+      } else if (difference.inDays == 1) {
+        return 'Yesterday';
+      } else if (difference.inDays < 7) {
+        return '${difference.inDays} days ago';
+      } else {
+        return '${date.day}/${date.month}/${date.year}';
+      }
+    } catch (e) {
+      return 'Invalid date';
     }
   }
 }

@@ -63,12 +63,12 @@ class CalendarEvent {
 
   Map<String, dynamic> toJson() {
     return {
-      'id': id,
+      if (id.isNotEmpty) 'id': id, // Only include id if it's not empty
       'title': title,
       'start_time': startTime.toIso8601String(),
       'end_time': endTime.toIso8601String(),
       'description': description,
-      'color': color.value,
+      'color': color.value.toSigned(32), // Convert to signed 32-bit integer for PostgreSQL
       'is_all_day': isAllDay,
       'location': location,
       'meeting_link': meetingLink,
@@ -181,6 +181,7 @@ enum CalendarEventStatus {
 
 /// Availability settings for users
 class AvailabilitySettings {
+  final String? id;
   final String userId;
   final List<AvailabilitySlot> weeklyAvailability;
   final int advanceBookingDays;
@@ -190,6 +191,7 @@ class AvailabilitySettings {
   final DateTime? updatedAt;
 
   AvailabilitySettings({
+    this.id,
     required this.userId,
     required this.weeklyAvailability,
     this.advanceBookingDays = 30,
@@ -201,6 +203,7 @@ class AvailabilitySettings {
 
   factory AvailabilitySettings.fromJson(Map<String, dynamic> json) {
     return AvailabilitySettings(
+      id: json['id'] as String?,
       userId: json['user_id'] as String,
       weeklyAvailability: (json['weekly_availability'] as List<dynamic>)
           .map((e) => AvailabilitySlot.fromJson(e as Map<String, dynamic>))
@@ -219,6 +222,7 @@ class AvailabilitySettings {
 
   Map<String, dynamic> toJson() {
     return {
+      if (id != null) 'id': id,
       'user_id': userId,
       'weekly_availability': weeklyAvailability.map((e) => e.toJson()).toList(),
       'advance_booking_days': advanceBookingDays,

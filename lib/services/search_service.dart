@@ -5,6 +5,9 @@ class SearchService {
     required String selectedJobType,
     required String selectedLocation,
     required String selectedExperience,
+    required String selectedIndustry,
+    required String selectedCompanySize,
+    required bool showRemoteOnly,
     required double salaryMin,
     required double salaryMax,
   }) {
@@ -33,6 +36,19 @@ class SearchService {
       final matchesExperience = selectedExperience == 'all' ||
           (job['experience_level'] ?? '').toLowerCase().contains(selectedExperience.toLowerCase());
 
+      // Filter by industry
+      final matchesIndustry = selectedIndustry == 'all' ||
+          (job['companies']?['industry'] ?? '').toLowerCase().contains(selectedIndustry.toLowerCase());
+
+      // Filter by company size
+      final matchesCompanySize = selectedCompanySize == 'all' ||
+          (job['companies']?['company_size'] ?? '').toLowerCase().contains(selectedCompanySize.toLowerCase());
+
+      // Filter by remote work
+      final matchesRemote = !showRemoteOnly || 
+          (job['type'] == 'remote') ||
+          (job['location'] ?? '').toLowerCase().contains('remote');
+
       // Filter by salary range
       final salaryMinJob = job['salary_min'] ?? 0;
       final salaryMaxJob = job['salary_max'] ?? 0;
@@ -40,7 +56,8 @@ class SearchService {
           (salaryMaxJob >= salaryMin && salaryMaxJob <= salaryMax) ||
           (salaryMinJob <= salaryMin && salaryMaxJob >= salaryMax);
 
-      return matchesSearch && matchesJobType && matchesLocation && matchesExperience && matchesSalary;
+      return matchesSearch && matchesJobType && matchesLocation && matchesExperience && 
+             matchesIndustry && matchesCompanySize && matchesRemote && matchesSalary;
     }).toList();
   }
 
@@ -48,12 +65,18 @@ class SearchService {
     required String selectedJobType,
     required String selectedLocation,
     required String selectedExperience,
+    required String selectedIndustry,
+    required String selectedCompanySize,
+    required bool showRemoteOnly,
     required double salaryMin,
     required double salaryMax,
   }) {
     return selectedJobType != 'all' ||
         selectedLocation != 'all' ||
         selectedExperience != 'all' ||
+        selectedIndustry != 'all' ||
+        selectedCompanySize != 'all' ||
+        showRemoteOnly ||
         salaryMin != 0 ||
         salaryMax != 500000;
   }

@@ -27,14 +27,22 @@ class _EmployerRegistrationDocumentsScreenState extends State<EmployerRegistrati
   static const Color mediumSeaGreen = Color(0xFF4CA771);
   static const Color darkTeal = Color(0xFF013237);
 
-  // Track uploaded files
+  // Track uploaded files and their URLs
   String? _businessLicenseFileName;
   String? _taxIdFileName;
   String? _businessRegistrationFileName;
+  String? _businessLicenseUrl;
+  String? _taxIdUrl;
+  String? _businessRegistrationUrl;
+  bool _isUploading = false;
 
   /// Safely handle document upload action
   Future<void> _handleDocumentUpload(String documentType) async {
+    if (_isUploading) return; // Prevent multiple uploads
+    
     try {
+      setState(() => _isUploading = true);
+      
       // Show file picker
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
@@ -56,8 +64,6 @@ class _EmployerRegistrationDocumentsScreenState extends State<EmployerRegistrati
         // Check if file has bytes
         if (file.bytes == null || file.bytes!.isEmpty) {
           debugPrint('❌ File bytes are null or empty');
-          // Add a small delay to ensure UI is stable
-          await Future.delayed(const Duration(milliseconds: 100));
           if (mounted) {
             SafeSnackBar.showError(
               context,
@@ -67,16 +73,15 @@ class _EmployerRegistrationDocumentsScreenState extends State<EmployerRegistrati
           return;
         }
         
-        // Show loading indicator
-        await Future.delayed(const Duration(milliseconds: 100));
         if (mounted) {
           SafeSnackBar.showInfo(
             context,
-            message: 'Processing ${file.name}...',
+            message: 'Uploading ${file.name}...',
           );
         }
 
-        // Store file information locally (we'll upload after registration)
+        // During registration, we can't upload to storage yet since user isn't authenticated
+        // Instead, we'll store the file data temporarily and upload after authentication
         if (mounted) {
           setState(() {
             switch (documentType) {
@@ -92,20 +97,13 @@ class _EmployerRegistrationDocumentsScreenState extends State<EmployerRegistrati
             }
           });
           
-          debugPrint('📁 File stored locally: ${file.name}');
-          
-          // Add a small delay before showing success message
-          await Future.delayed(const Duration(milliseconds: 100));
-          if (mounted) {
-            SafeSnackBar.showSuccess(
-              context,
-              message: 'File selected: ${file.name}',
-            );
-          }
+          SafeSnackBar.showSuccess(
+            context,
+            message: 'Document selected: ${file.name}. Will be uploaded after registration.',
+          );
         }
       } else {
         // User cancelled file selection
-        await Future.delayed(const Duration(milliseconds: 100));
         if (mounted) {
           SafeSnackBar.showInfo(
             context,
@@ -116,13 +114,36 @@ class _EmployerRegistrationDocumentsScreenState extends State<EmployerRegistrati
     } catch (e) {
       // Handle any errors
       debugPrint('❌ Error in file selection: $e');
-      await Future.delayed(const Duration(milliseconds: 100));
       if (mounted) {
         SafeSnackBar.showError(
           context,
-          message: 'Error selecting file: $e',
+          message: 'Error uploading file: $e',
         );
       }
+    } finally {
+      if (mounted) {
+        setState(() => _isUploading = false);
+      }
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // Initialize URLs from existing registration data
+    _businessLicenseUrl = widget.registrationData.businessLicenseUrl;
+    _taxIdUrl = widget.registrationData.taxIdDocumentUrl;
+    _businessRegistrationUrl = widget.registrationData.businessRegistrationUrl;
+    
+    // Set file names if URLs exist (for display purposes)
+    if (_businessLicenseUrl != null && _businessLicenseUrl!.isNotEmpty) {
+      _businessLicenseFileName = 'Business License';
+    }
+    if (_taxIdUrl != null && _taxIdUrl!.isNotEmpty) {
+      _taxIdFileName = 'Tax ID Document';
+    }
+    if (_businessRegistrationUrl != null && _businessRegistrationUrl!.isNotEmpty) {
+      _businessRegistrationFileName = 'Business Registration';
     }
   }
 
@@ -430,7 +451,7 @@ class _EmployerRegistrationDocumentsScreenState extends State<EmployerRegistrati
               const SizedBox(width: 16),
               Expanded(
                 child: ElevatedButton(
-                  onPressed: widget.onNext,
+                  onPressed: _isUploading ? null : widget.onNext,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: mediumSeaGreen,
                     foregroundColor: Colors.white,
@@ -439,13 +460,29 @@ class _EmployerRegistrationDocumentsScreenState extends State<EmployerRegistrati
                     ),
                     padding: const EdgeInsets.symmetric(vertical: 16),
                   ),
-                  child: const Text(
-                    'Review & Submit',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                  child: _isUploading 
+                    ? const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          ),
+                          SizedBox(width: 12),
+                          Text('Uploading...'),
+                        ],
+                      )
+                    : const Text(
+                        'Review & Submit',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                 ),
               ),
             ],
@@ -578,3 +615,4 @@ class _EmployerRegistrationDocumentsScreenState extends State<EmployerRegistrati
     );
   }
 }
+

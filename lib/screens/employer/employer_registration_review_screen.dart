@@ -136,6 +136,50 @@ class _EmployerRegistrationReviewScreenState extends State<EmployerRegistrationR
 
           const SizedBox(height: 32),
 
+          // Document Upload Notice
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: mediumSeaGreen.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: mediumSeaGreen.withValues(alpha: 0.3)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.upload_file, color: mediumSeaGreen),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Document Upload',
+                      style: TextStyle(
+                        color: mediumSeaGreen,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'After submitting your registration, you will be able to upload required documents in the Application Status screen:\n\n'
+                  '• Business License Document\n'
+                  '• Tax ID Document\n'
+                  '• Business Registration Document\n\n'
+                  'You can access the upload feature after logging in and checking your application status.',
+                  style: TextStyle(
+                    color: darkTeal.withValues(alpha: 0.8),
+                    fontSize: 14,
+                    height: 1.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
           // Important Notice
           Container(
             padding: const EdgeInsets.all(20),

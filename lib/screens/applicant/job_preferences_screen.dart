@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../services/job_recommendation_service.dart';
 import '../../services/job_service.dart';
+import '../../services/job_preferences_service.dart';
+import '../applicant/home_screen.dart';
 
 class JobPreferencesScreen extends StatefulWidget {
   const JobPreferencesScreen({super.key});
@@ -131,6 +133,122 @@ class _JobPreferencesScreenState extends State<JobPreferencesScreen> {
     }
   }
 
+  void _showExitConfirmationDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.warning_amber,
+                color: Colors.orange,
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Complete Setup',
+                style: TextStyle(
+                  color: darkTeal,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Setting up your job preferences helps us recommend the best opportunities for you.',
+              style: const TextStyle(color: darkTeal),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: lightMint,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: paleGreen.withValues(alpha: 0.5),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    color: mediumSeaGreen,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'This will only take 2-3 minutes and greatly improves your job recommendations.',
+                      style: TextStyle(
+                        color: darkTeal,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'Continue Setup',
+              style: TextStyle(
+                color: mediumSeaGreen,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context); // Close dialog
+              // Sign out the user since they're not completing setup
+              await Supabase.instance.client.auth.signOut();
+              if (mounted) {
+                Navigator.pushNamedAndRemoveUntil(
+                  context,
+                  '/login',
+                  (route) => false,
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Text(
+              'Sign Out',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _savePreferences() async {
     setState(() => _isSaving = true);
     
@@ -146,13 +264,23 @@ class _JobPreferencesScreenState extends State<JobPreferencesScreen> {
       );
 
       if (success) {
+        // Mark job preferences as completed
+        await JobPreferencesService.markPreferencesCompleted();
+        
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Preferences saved successfully!'),
             backgroundColor: mediumSeaGreen,
           ),
         );
-        Navigator.pop(context, true); // Return true to indicate refresh needed
+        
+        // Navigate to home screen for new users, or pop for existing users updating preferences
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const HomeScreen()),
+          );
+        }
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -190,7 +318,17 @@ class _JobPreferencesScreenState extends State<JobPreferencesScreen> {
         ),
         leading: IconButton(
           icon: Icon(Icons.arrow_back, color: darkTeal),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () async {
+            // Check if this is a new user who hasn't completed preferences
+            final hasCompleted = await JobPreferencesService.hasCompletedPreferences();
+            if (!hasCompleted) {
+              // Show confirmation dialog for new users
+              _showExitConfirmationDialog();
+            } else {
+              // Existing user updating preferences - allow back navigation
+              Navigator.pop(context);
+            }
+          },
         ),
         actions: [
           if (_currentPage == 2)

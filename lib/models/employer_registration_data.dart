@@ -1,5 +1,6 @@
 /// Employer Registration Data Model
 /// Comprehensive model for employer registration with validation
+library;
 import 'package:flutter/foundation.dart';
 
 class EmployerRegistrationData {
@@ -434,23 +435,23 @@ class EmployerRegistrationData {
     
     // Debug phone number validation
     if (phoneNumber != null && phoneNumber!.trim().isNotEmpty) {
-      debugPrint('📱 Validating personal phone: ${phoneNumber}');
+      debugPrint('📱 Validating personal phone: $phoneNumber');
       if (!isValidPhoneNumber()) {
         errors.add('Invalid phone number format');
-        debugPrint('❌ Personal phone validation failed: ${phoneNumber}');
+        debugPrint('❌ Personal phone validation failed: $phoneNumber');
       } else {
-        debugPrint('✅ Personal phone validation passed: ${phoneNumber}');
+        debugPrint('✅ Personal phone validation passed: $phoneNumber');
       }
     }
     
     // Debug contact person phone validation
     if (contactPersonPhone != null && contactPersonPhone!.trim().isNotEmpty) {
-      debugPrint('📱 Validating contact person phone: ${contactPersonPhone}');
+      debugPrint('📱 Validating contact person phone: $contactPersonPhone');
       if (!isValidContactPersonPhone()) {
         errors.add('Invalid contact person phone number format');
-        debugPrint('❌ Contact person phone validation failed: ${contactPersonPhone}');
+        debugPrint('❌ Contact person phone validation failed: $contactPersonPhone');
       } else {
-        debugPrint('✅ Contact person phone validation passed: ${contactPersonPhone}');
+        debugPrint('✅ Contact person phone validation passed: $contactPersonPhone');
       }
     }
     

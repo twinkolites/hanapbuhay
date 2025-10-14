@@ -2,12 +2,16 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../services/job_service.dart';
+import '../../services/onesignal_notification_service.dart';
 import 'post_job_screen.dart';
 import 'edit_job_screen.dart';
+import 'edit_company_screen.dart';
 import 'profile_screen.dart';
 import 'applications_screen.dart';
 import 'applications_overview_screen.dart';
 import 'chat_list_screen.dart';
+import 'calendar_screen.dart';
+import '../notifications_screen.dart';
 
 class EmployerHomeScreen extends StatefulWidget {
   const EmployerHomeScreen({super.key});
@@ -25,6 +29,7 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
   int _totalApplications = 0;
   Map<String, dynamic>? _deletedJob;
   Timer? _undoTimer;
+  int _unreadNotificationCount = 0;
   
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
@@ -131,19 +136,38 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
     if (user != null) {
       _displayName = user.userMetadata?['full_name'] ?? user.email;
       
-      // Get or create company
-      _company = await JobService.getUserCompany(user.id) ?? 
-        await JobService.createCompany(
-          ownerId: user.id,
-          name: '$_displayName\'s Company',
-          about: 'Professional services company',
-        );
+      // Prefer RPC used in profile (RLS-safe) to fetch company, then fallback
+      try {
+        final rpc = await Supabase.instance.client
+            .rpc('get_employer_profile_data', params: {
+          'user_uuid': user.id,
+        });
+
+        if (rpc is List && rpc.isNotEmpty) {
+          final data = rpc.first as Map<String, dynamic>;
+          final companyData = data['company_data'] as Map<String, dynamic>?;
+          if (companyData != null) {
+            _company = companyData;
+          }
+        }
+      } catch (e) {
+        debugPrint('Error fetching company via RPC: $e');
+      }
+
+      // Fallbacks
+      _company ??= await JobService.getUserCompany(user.id);
+      _company ??= await JobService.createCompany(
+        ownerId: user.id,
+        name: '$_displayName\'s Company',
+        about: 'Professional services company',
+      );
       
-      // Load jobs and applications
+      // Load jobs, applications, and notifications
       if (_company != null) {
         await Future.wait([
           _loadJobs(),
           _loadApplicationsCount(),
+          _loadNotificationCount(),
         ]);
       }
     }
@@ -183,6 +207,22 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
     }
   }
 
+  Future<void> _loadNotificationCount() async {
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user != null) {
+        final count = await OneSignalNotificationService.getUnreadCount(user.id);
+        if (mounted) {
+          setState(() {
+            _unreadNotificationCount = count;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading notification count: $e');
+    }
+  }
+
 
   void _navigateToPostJob() async {
     if (_company != null && _navigator != null) {
@@ -192,10 +232,128 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
         ),
       );
       
+      // Always reset to home tab after returning
+      if (mounted) {
+        setState(() {
+          _currentIndex = 0;
+        });
+      }
+      
       if (result == true) {
         // Reload jobs and applications count after posting
         await _loadJobs();
         await _loadApplicationsCount();
+      }
+    }
+  }
+
+  void _navigateToAllJobsAnalytics() async {
+    if (_navigator != null) {
+      await _navigator!.push(
+        MaterialPageRoute(
+          builder: (context) => const ApplicationsOverviewScreen(),
+        ),
+      );
+      
+      // Reset to home tab after returning
+      if (mounted) {
+        setState(() {
+          _currentIndex = 0;
+        });
+      }
+    }
+  }
+
+  void _navigateToActiveJobs() async {
+    if (_navigator != null) {
+      // Show a filtered view of only active jobs
+      final activeJobs = _jobs.where((job) => job['status'] == 'open').toList();
+      
+      if (activeJobs.isEmpty) {
+        // Show message if no active jobs
+        if (mounted && _scaffoldMessenger != null) {
+          _scaffoldMessenger!.showSnackBar(
+            SnackBar(
+              content: const Text('No active jobs found. Post a new job to get started!'),
+              backgroundColor: mediumSeaGreen,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              action: SnackBarAction(
+                label: 'POST JOB',
+                textColor: Colors.white,
+                onPressed: _navigateToPostJob,
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      
+      await _navigator!.push(
+        MaterialPageRoute(
+          builder: (context) => const ApplicationsOverviewScreen(),
+        ),
+      );
+      
+      // Reset to home tab after returning
+      if (mounted) {
+        setState(() {
+          _currentIndex = 0;
+        });
+      }
+    }
+  }
+
+  void _navigateToApplicationsOverview() async {
+    if (_navigator != null) {
+      if (_totalApplications == 0) {
+        // Show helpful message if no applications
+        if (mounted && _scaffoldMessenger != null) {
+          _scaffoldMessenger!.showSnackBar(
+            SnackBar(
+              content: const Text('No applications yet. Share your job postings to attract candidates!'),
+              backgroundColor: paleGreen,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+        return;
+      }
+      
+      await _navigator!.push(
+        MaterialPageRoute(
+          builder: (context) => const ApplicationsOverviewScreen(),
+        ),
+      );
+      
+      // Reset to home tab after returning
+      if (mounted) {
+        setState(() {
+          _currentIndex = 0;
+        });
+      }
+    }
+  }
+
+  void _navigateToCompanyProfile() async {
+    if (_navigator != null && _company != null) {
+      await _navigator!.push(
+        MaterialPageRoute(
+          builder: (context) => EditCompanyScreen(company: _company!),
+        ),
+      );
+      
+      // Reset to home tab after returning
+      if (mounted) {
+        setState(() {
+          _currentIndex = 0;
+        });
       }
     }
   }
@@ -234,16 +392,6 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
           ],
         ),
       ),
-      floatingActionButton: _jobs.isNotEmpty ? FloatingActionButton.extended(
-        onPressed: _navigateToPostJob,
-        backgroundColor: mediumSeaGreen,
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.add),
-        label: const Text(
-          'Post Job',
-          style: TextStyle(fontWeight: FontWeight.w600),
-        ),
-      ) : null,
       bottomNavigationBar: _buildBottomNavigationBar(),
     );
   }
@@ -291,19 +439,36 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
                   _buildActionButton(
                     icon: Icons.notifications_outlined,
                     onTap: () {
-                      // TODO: Implement notifications
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const NotificationsScreen(),
+                        ),
+                      ).then((_) {
+                        // Refresh notification count when returning
+                        _loadNotificationCount();
+                      });
                     },
+                    badge: _unreadNotificationCount > 0,
+                    badgeCount: _unreadNotificationCount,
                   ),
                   const SizedBox(width: 12),
                   _buildActionButton(
                     icon: Icons.person,
-                    onTap: () {
+                    onTap: () async {
                       if (_navigator != null) {
-                        _navigator!.push(
+                        await _navigator!.push(
                           MaterialPageRoute(
                             builder: (context) => const EmployerProfileScreen(),
                           ),
                         );
+                        
+                        // Reset to home tab after returning
+                        if (mounted) {
+                          setState(() {
+                            _currentIndex = 0;
+                          });
+                        }
                       }
                     },
                   ),
@@ -323,6 +488,7 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
                   '${_jobs.where((job) => job['status'] == 'open').length}',
                   Icons.work_outline,
                   mediumSeaGreen,
+                  onTap: _navigateToActiveJobs,
                 ),
               ),
               const SizedBox(width: 12),
@@ -332,6 +498,7 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
                   '$_totalApplications',
                   Icons.people_outline,
                   paleGreen,
+                  onTap: _navigateToApplicationsOverview,
                 ),
               ),
               const SizedBox(width: 12),
@@ -341,6 +508,7 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
                   _company?['name']?.split(' ').first ?? 'N/A',
                   Icons.business_outlined,
                   darkTeal,
+                  onTap: _navigateToCompanyProfile,
                 ),
               ),
             ],
@@ -353,6 +521,8 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
   Widget _buildActionButton({
     required IconData icon,
     required VoidCallback onTap,
+    bool badge = false,
+    int badgeCount = 0,
   }) {
     return GestureDetector(
       onTap: onTap,
@@ -370,53 +540,98 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
             ),
           ],
         ),
-        child: Center(
-          child: Icon(
-            icon,
-            color: darkTeal,
-            size: 20,
-          ),
+        child: Stack(
+          children: [
+            Center(
+              child: Icon(
+                icon,
+                color: darkTeal,
+                size: 20,
+              ),
+            ),
+            if (badge)
+              Positioned(
+                top: 6,
+                right: 6,
+                child: Container(
+                  padding: const EdgeInsets.all(2),
+                  constraints: const BoxConstraints(
+                    minWidth: 16,
+                    minHeight: 16,
+                  ),
+                  decoration: const BoxDecoration(
+                    color: Colors.red,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(
+                    badgeCount > 99 ? '99+' : badgeCount.toString(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildStatCard(String label, String value, IconData icon, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
+  Widget _buildStatCard(String label, String value, IconData icon, Color color, {VoidCallback? onTap}) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: color.withValues(alpha: 0.2),
-          width: 1,
-        ),
-      ),
-      child: Column(
-        children: [
-          Icon(
-            icon,
-            color: color,
-            size: 20,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: TextStyle(
-              color: color,
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
+        splashColor: color.withValues(alpha: 0.1),
+        highlightColor: color.withValues(alpha: 0.05),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: color.withValues(alpha: 0.2),
+              width: 1,
             ),
-          ),
-            Text(
-              label,
-              style: TextStyle(
-                color: color.withValues(alpha: 0.8),
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
+            boxShadow: onTap != null ? [
+              BoxShadow(
+                color: color.withValues(alpha: 0.1),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
               ),
-            ),
-        ],
+            ] : null,
+          ),
+          child: Column(
+            children: [
+              Icon(
+                icon,
+                color: color,
+                size: 20,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                value,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Text(
+                label,
+                style: TextStyle(
+                  color: color.withValues(alpha: 0.8),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -440,9 +655,9 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
                 ),
               ),
               TextButton.icon(
-                onPressed: _navigateToPostJob,
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('Post New'),
+                onPressed: _navigateToAllJobsAnalytics,
+                icon: const Icon(Icons.analytics_outlined, size: 16),
+                label: const Text('Analytics'),
                 style: TextButton.styleFrom(
                   foregroundColor: mediumSeaGreen,
                   textStyle: const TextStyle(
@@ -498,7 +713,7 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
             const SizedBox(height: 24),
             ElevatedButton.icon(
               onPressed: _navigateToPostJob,
-              icon: const Icon(Icons.add),
+              icon: const Icon(Icons.add_circle_outline),
               label: const Text('Post Your First Job'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: mediumSeaGreen,
@@ -627,11 +842,15 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
                           size: 14,
                         ),
                         const SizedBox(width: 4),
-                        Text(
-                          job['type'] ?? 'Full-time',
-                          style: TextStyle(
-                            color: darkTeal.withValues(alpha: 0.7),
-                            fontSize: 11,
+                        Expanded(
+                          child: Text(
+                            _formatJobTypes(job),
+                            style: TextStyle(
+                              color: darkTeal.withValues(alpha: 0.7),
+                              fontSize: 11,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                       ],
@@ -672,13 +891,20 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: () {
+                  onPressed: () async {
                     if (_navigator != null) {
-                      _navigator!.push(
+                      await _navigator!.push(
                         MaterialPageRoute(
                           builder: (context) => ApplicationsScreen(job: job),
                         ),
                       );
+                      
+                      // Reset to home tab after returning
+                      if (mounted) {
+                        setState(() {
+                          _currentIndex = 0;
+                        });
+                      }
                     }
                   },
                   icon: const Icon(Icons.people_outline, size: 14),
@@ -742,6 +968,53 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
     return number.toString();
   }
 
+  String _formatJobTypes(Map<String, dynamic> job) {
+    final jobTypes = (job['job_types'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final primaryJobType = job['primary_job_type'] as Map<String, dynamic>?;
+    
+    // If no job types from new system, fall back to old single type
+    if (jobTypes.isEmpty && job['type'] != null) {
+      return _formatJobTypeDisplay(job['type']);
+    }
+    
+    // Display primary job type or first type, plus count if multiple
+    if (jobTypes.isEmpty) {
+      return 'Full-time';
+    }
+    
+    final displayType = primaryJobType?['display_name'] ?? 
+                       jobTypes.first['display_name'] ?? 
+                       jobTypes.first['name'] ?? 
+                       'Full-time';
+    
+    if (jobTypes.length > 1) {
+      return '$displayType +${jobTypes.length - 1}';
+    }
+    
+    return displayType;
+  }
+
+  String _formatJobTypeDisplay(String type) {
+    switch (type) {
+      case 'full_time':
+        return 'Full Time';
+      case 'part_time':
+        return 'Part Time';
+      case 'contract':
+        return 'Contract';
+      case 'temporary':
+        return 'Temporary';
+      case 'internship':
+        return 'Internship';
+      case 'remote':
+        return 'Remote';
+      default:
+        return type.split('_').map((word) => 
+          word[0].toUpperCase() + word.substring(1)
+        ).join(' ');
+    }
+  }
+
   void _navigateToEditJob(Map<String, dynamic> job) async {
     if (_navigator != null) {
       final result = await _navigator!.push(
@@ -749,6 +1022,13 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
           builder: (context) => EditJobScreen(job: job),
         ),
       );
+      
+      // Reset to home tab after returning
+      if (mounted) {
+        setState(() {
+          _currentIndex = 0;
+        });
+      }
       
       if (result == true) {
         await _loadJobs();
@@ -973,13 +1253,15 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
       ),
       child: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
               _buildNavItem(Icons.home_rounded, 'Home', 0),
-              _buildNavItem(Icons.message_rounded, 'Messages', 1),
-              _buildNavItem(Icons.people_rounded, 'Applications', 2),
+              _buildNavItem(Icons.add_circle_outline, 'Post', 1),
+              _buildNavItem(Icons.calendar_today_rounded, 'Calendar', 2),
+              _buildNavItem(Icons.message_rounded, 'Chat', 3),
+              _buildNavItem(Icons.people_rounded, 'Apps', 4),
             ],
           ),
         ),
@@ -992,29 +1274,67 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
     
     return GestureDetector(
       onTap: () {
-        if (mounted) {
-          setState(() {
-            _currentIndex = index;
-          });
-        }
-        
         // Handle navigation based on index
-        if (index == 1 && _navigator != null) {
-          // Navigate to messages
+        if (index == 0) {
+          // Home - just set the index
+          if (mounted) {
+            setState(() {
+              _currentIndex = 0;
+            });
+          }
+        } else if (index == 1 && _navigator != null) {
+          // Post Job - navigate and index will be reset in callback
+          if (mounted) {
+            setState(() {
+              _currentIndex = index;
+            });
+          }
+          _navigateToPostJob();
+        } else if (index == 2 && _navigator != null) {
+          // Calendar - navigate with temporary index change
+          if (mounted) {
+            setState(() {
+              _currentIndex = index;
+            });
+          }
+          _navigator!.push(
+            MaterialPageRoute(
+              builder: (context) => const EmployerCalendarScreen(),
+            ),
+          ).then((_) {
+            // Reset to home tab after returning from calendar
+            if (mounted) {
+              setState(() {
+                _currentIndex = 0;
+              });
+            }
+          });
+        } else if (index == 3 && _navigator != null) {
+          // Messages - navigate with temporary index change
+          if (mounted) {
+            setState(() {
+              _currentIndex = index;
+            });
+          }
           _navigator!.push(
             MaterialPageRoute(
               builder: (context) => const EmployerChatListScreen(),
             ),
           ).then((_) {
-        // Reset to home tab after returning from messages
-        if (mounted) {
-          setState(() {
-            _currentIndex = 0;
+            // Reset to home tab after returning from messages
+            if (mounted) {
+              setState(() {
+                _currentIndex = 0;
+              });
+            }
           });
-        }
-          });
-        } else if (index == 2 && _navigator != null) {
-          // Navigate to applications overview
+        } else if (index == 4 && _navigator != null) {
+          // Applications - navigate with temporary index change
+          if (mounted) {
+            setState(() {
+              _currentIndex = index;
+            });
+          }
           _navigator!.push(
             MaterialPageRoute(
               builder: (context) => const ApplicationsOverviewScreen(),
@@ -1027,27 +1347,13 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
               });
             }
           });
-        } else if (index == 3 && _navigator != null) {
-          // Navigate to profile
-          _navigator!.push(
-            MaterialPageRoute(
-              builder: (context) => const EmployerProfileScreen(),
-            ),
-          ).then((_) {
-            // Reset to home tab after returning from profile
-            if (mounted) {
-              setState(() {
-                _currentIndex = 0;
-              });
-            }
-          });
         }
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         decoration: BoxDecoration(
           color: isSelected ? mediumSeaGreen.withValues(alpha: 0.1) : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(10),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1055,14 +1361,14 @@ class _EmployerHomeScreenState extends State<EmployerHomeScreen> with TickerProv
             Icon(
               icon,
               color: isSelected ? mediumSeaGreen : darkTeal.withValues(alpha: 0.6),
-              size: 24,
+              size: 22,
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 3),
             Text(
               label,
               style: TextStyle(
                 color: isSelected ? mediumSeaGreen : darkTeal.withValues(alpha: 0.6),
-                fontSize: 11,
+                fontSize: 9,
                 fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
               ),
             ),

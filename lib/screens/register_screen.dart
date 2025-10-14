@@ -9,6 +9,8 @@ import 'terms_of_service_screen.dart';
 import 'privacy_policy_screen.dart';
 import 'login_screen.dart';
 import '../services/input_security_service.dart';
+import '../utils/age_validation_utils.dart';
+import '../utils/button_debouncer.dart';
 
 // Using Supabase.instance.client directly instead of global variable
 
@@ -20,10 +22,11 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, ButtonDebouncerMixin {
   bool _acceptTerms = false;
   bool _isPasswordVisible = false;
   bool _isConfirmPasswordVisible = false;
+  bool _isRegistering = false;
 
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
@@ -99,6 +102,7 @@ class _RegisterScreenState extends State<RegisterScreen>
     _phoneController.dispose();
     _birthdayController.dispose();
     _authSubscription?.cancel();
+    disposeDebouncer(); // Clean up debounce timers
     super.dispose();
   }
 
@@ -248,13 +252,29 @@ class _RegisterScreenState extends State<RegisterScreen>
     // Show success toast first
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: const Text('Account created successfully! Email verified.'),
+        content: Row(
+          children: const [
+            Icon(Icons.check_circle, color: Colors.white, size: 20),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Account created successfully! Email verified.',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
         backgroundColor: mediumSeaGreen,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(8),
         ),
         duration: const Duration(seconds: 3),
+        margin: const EdgeInsets.all(16),
       ),
     );
     
@@ -272,7 +292,7 @@ class _RegisterScreenState extends State<RegisterScreen>
           'Your email has been verified. You can now sign in.',
           style: TextStyle(
             color: darkTeal.withValues(alpha: 0.9),
-            fontSize: 12,
+            fontSize: 14,
           ),
         ),
         actions: [
@@ -318,6 +338,30 @@ class _RegisterScreenState extends State<RegisterScreen>
   }
 
   Future<void> _signUp() async {
+    // Check if already registering to prevent multiple calls
+    if (_isRegistering) return;
+    
+    // Debounce the sign-up action to prevent rapid clicks
+    debounce('sign_up', () async {
+      if (mounted) {
+        setState(() {
+          _isRegistering = true;
+        });
+      }
+      
+      try {
+        await _performSignUp();
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isRegistering = false;
+          });
+        }
+      }
+    });
+  }
+
+  Future<void> _performSignUp() async {
     // Clear any existing real-time validation errors
     setState(() {
       _fullNameError = null;
@@ -619,7 +663,11 @@ class _RegisterScreenState extends State<RegisterScreen>
         Row(
           children: [
             GestureDetector(
-              onTap: () => Navigator.pop(context),
+              onTap: () {
+                debounce('navigate_back', () {
+                  Navigator.pop(context);
+                });
+              },
               child: Container(
                 width: 40,
                 height: 40,
@@ -664,9 +712,9 @@ class _RegisterScreenState extends State<RegisterScreen>
       context: context,
       initialDate:
           _selectedBirthday ??
-          DateTime.now().subtract(const Duration(days: 6570)), // 18 years ago
+          AgeValidationUtils.getMinimumBirthDate(), // Exactly 18 years ago
       firstDate: DateTime(1900),
-      lastDate: DateTime.now(),
+      lastDate: AgeValidationUtils.getMinimumBirthDate(), // Must be at least 18 years old
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
@@ -705,7 +753,11 @@ class _RegisterScreenState extends State<RegisterScreen>
         ),
         const SizedBox(height: 6),
         GestureDetector(
-          onTap: _selectBirthday,
+          onTap: () {
+            debounce('select_birthday', () {
+              _selectBirthday();
+            });
+          },
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
             decoration: BoxDecoration(
@@ -883,8 +935,11 @@ class _RegisterScreenState extends State<RegisterScreen>
             icon: Icons.lock_outline,
             isPassword: true,
             isPasswordVisible: _isPasswordVisible,
-            onTogglePassword: () =>
-                setState(() => _isPasswordVisible = !_isPasswordVisible),
+            onTogglePassword: () {
+              debounce('toggle_password_visibility', () {
+                setState(() => _isPasswordVisible = !_isPasswordVisible);
+              });
+            },
             onChanged: _validatePassword,
             validator: (value) {
               if (value == null || value.trim().isEmpty) {
@@ -920,9 +975,11 @@ class _RegisterScreenState extends State<RegisterScreen>
             icon: Icons.lock_outline,
             isPassword: true,
             isPasswordVisible: _isConfirmPasswordVisible,
-            onTogglePassword: () => setState(
-              () => _isConfirmPasswordVisible = !_isConfirmPasswordVisible,
-            ),
+            onTogglePassword: () {
+              debounce('toggle_confirm_password_visibility', () {
+                setState(() => _isConfirmPasswordVisible = !_isConfirmPasswordVisible);
+              });
+            },
             onChanged: _validateConfirmPassword,
             validator: (value) {
               if (value == null || value.trim().isEmpty) {
@@ -1078,7 +1135,11 @@ class _RegisterScreenState extends State<RegisterScreen>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         GestureDetector(
-          onTap: () => setState(() => _acceptTerms = !_acceptTerms),
+          onTap: () {
+            debounce('toggle_terms', () {
+              setState(() => _acceptTerms = !_acceptTerms);
+            });
+          },
           child: Container(
             width: 24,
             height: 24,
@@ -1111,12 +1172,14 @@ class _RegisterScreenState extends State<RegisterScreen>
                 WidgetSpan(
                   child: GestureDetector(
                     onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const TermsOfServiceScreen(),
-                        ),
-                      );
+                      debounce('navigate_terms', () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const TermsOfServiceScreen(),
+                          ),
+                        );
+                      });
                     },
                     child: Text(
                       'Terms of Service',
@@ -1133,12 +1196,14 @@ class _RegisterScreenState extends State<RegisterScreen>
                 WidgetSpan(
                   child: GestureDetector(
                     onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const PrivacyPolicyScreen(),
-                        ),
-                      );
+                      debounce('navigate_privacy', () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const PrivacyPolicyScreen(),
+                          ),
+                        );
+                      });
                     },
                     child: Text(
                       'Privacy Policy',
@@ -1162,11 +1227,12 @@ class _RegisterScreenState extends State<RegisterScreen>
   Widget _buildRegisterButton() {
     return Consumer<AuthProvider>(
       builder: (context, authProvider, child) {
+        final isLoading = authProvider.isLoading || _isRegistering || isDebounced('sign_up');
         return SizedBox(
           width: double.infinity,
           height: 44,
           child: ElevatedButton(
-            onPressed: authProvider.isLoading ? null : _signUp,
+            onPressed: isLoading ? null : _signUp,
             style: ElevatedButton.styleFrom(
               backgroundColor: mediumSeaGreen,
               foregroundColor: Colors.white,
@@ -1176,7 +1242,7 @@ class _RegisterScreenState extends State<RegisterScreen>
               ),
               shadowColor: mediumSeaGreen.withValues(alpha: 0.3),
             ),
-            child: authProvider.isLoading
+            child: isLoading
                 ? const SizedBox(
                     width: 18,
                     height: 18,
@@ -1208,7 +1274,11 @@ class _RegisterScreenState extends State<RegisterScreen>
             ),
           ),
           GestureDetector(
-            onTap: () => Navigator.pop(context),
+            onTap: () {
+              debounce('navigate_to_login', () {
+                Navigator.pop(context);
+              });
+            },
             child: Text(
               'Sign in',
               style: TextStyle(

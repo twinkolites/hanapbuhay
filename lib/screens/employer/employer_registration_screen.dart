@@ -10,7 +10,6 @@ import '../../utils/safe_snackbar.dart';
 import 'employer_registration_personal_info_screen.dart';
 import 'employer_registration_company_info_screen.dart';
 import 'employer_registration_business_info_screen.dart';
-import 'employer_registration_documents_screen.dart';
 import 'employer_registration_review_screen.dart';
 import '../login_screen.dart';
 
@@ -53,6 +52,8 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
   String? _verificationEmail;
   Timer? _verificationCheckTimer;
   StreamSubscription<AuthState>? _authSubscription;
+  bool _hasSubmittedRegistration = false;
+  bool _failureDialogShown = false;
 
   // Color palette
   static const Color mediumSeaGreen = Color(0xFF4CA771);
@@ -73,11 +74,6 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
       'title': 'Business Details',
       'subtitle': 'Location and industry info',
       'icon': Icons.location_on,
-    },
-    {
-      'title': 'Documents',
-      'subtitle': 'Upload verification documents',
-      'icon': Icons.description,
     },
     {
       'title': 'Review & Submit',
@@ -111,8 +107,11 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
     // Check for pending registration data and restore it
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkAndRestorePendingData();
-      _checkEmailVerification();
-      _startEmailVerificationListener();
+      // Only check email verification if we have pending data (user already submitted)
+      if (_verificationEmail != null) {
+        _checkEmailVerification();
+        _startEmailVerificationListener();
+      }
     });
 
     _authSubscription = Supabase.instance.client.auth.onAuthStateChange.listen((AuthState data) {
@@ -333,13 +332,15 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
     // Kick off an immediate check so the first update isn't delayed
     _checkEmailVerification();
     
-    // Set a timeout to detect failed verification attempts
-    Timer(const Duration(minutes: 5), () {
-      if (!_isEmailVerified && mounted) {
-        debugPrint('⏰ Email verification timeout - showing failure dialog');
-        _handleEmailVerificationFailure();
-      }
-    });
+    // Only set timeout if user has actually submitted registration
+    if (_hasSubmittedRegistration) {
+      Timer(const Duration(minutes: 5), () {
+        if (!_isEmailVerified && mounted && _hasSubmittedRegistration) {
+          debugPrint('⏰ Email verification timeout - showing failure dialog');
+          _handleEmailVerificationFailure();
+        }
+      });
+    }
   }
 
   void _stopEmailVerificationListener() {
@@ -348,6 +349,10 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
   }
 
   void _handleEmailVerificationFailure() {
+    // Prevent multiple dialogs from showing
+    if (_failureDialogShown) return;
+    _failureDialogShown = true;
+    
     // Show dialog with options for failed verification
     showDialog(
       context: context,
@@ -439,12 +444,24 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
     setState(() {
       _isEmailVerified = true;
       _verificationEmail = email ?? _verificationEmail;
+      _failureDialogShown = false; // Reset failure dialog flag on success
     });
 
     // Insert registration data into schema AFTER email confirmation
     try {
       // First, try to recover data from temporary storage
       await _recoverRegistrationDataFromStorage();
+      
+      // Fallback: If email is still empty, use the verified email
+      if (_registrationData.email.isEmpty && email != null) {
+        debugPrint('🔄 Using verified email as fallback: $email');
+        _registrationData = _registrationData.copyWith(email: email);
+      }
+      
+      // Final validation before storing
+      if (_registrationData.email.isEmpty) {
+        throw Exception('Email is required but not available');
+      }
       
       // Then store the data permanently
       await _storeRegistrationData();
@@ -492,7 +509,7 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
             _verificationEmail = storedEmail;
           });
           
-          debugPrint('🔄 Restored pending registration data for: ${storedEmail}');
+          debugPrint('🔄 Restored pending registration data for: $storedEmail');
           
           // Show restoration notification
           SafeSnackBar.showInfo(
@@ -518,6 +535,21 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
         final dataMap = jsonDecode(storedData) as Map<String, dynamic>;
         _registrationData = EmployerRegistrationData.fromJson(dataMap);
         debugPrint('🔄 Recovered registration data from storage');
+        debugPrint('🔄 Email from storage: ${_registrationData.email}');
+        debugPrint('🔄 Company name from storage: ${_registrationData.companyName}');
+        
+        // Validate that essential fields are not empty
+        if (_registrationData.email.isEmpty) {
+          debugPrint('❌ Email is empty after recovery, using fallback');
+          // Try to get email from the separate stored email
+          final storedEmail = prefs.getString('pending_employer_email');
+          if (storedEmail != null && storedEmail.isNotEmpty) {
+            _registrationData = _registrationData.copyWith(email: storedEmail);
+            debugPrint('✅ Restored email from fallback: $storedEmail');
+          }
+        }
+      } else {
+        debugPrint('⚠️ No stored registration data found');
       }
     } catch (e) {
       debugPrint('⚠️ Failed to recover registration data: $e');
@@ -564,6 +596,8 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
         _isEmailVerified = false;
         _verificationEmail = null;
         _currentStep = 0;
+        _hasSubmittedRegistration = false;
+        _failureDialogShown = false;
       });
       
       debugPrint('🗑️ Cleared all pending registration data');
@@ -607,13 +641,16 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
     setState(() => _isLoading = true);
 
     try {
+      // Mark that registration has been submitted
+      _hasSubmittedRegistration = true;
+      
       // First, create the user account and send email verification
       await _createAccountAndSendVerification();
       
       // Show email verification dialog
       _showEmailVerificationDialog();
       
-      // Start listening for email verification
+      // Start listening for email verification (now with timeout)
       _startEmailVerificationListener();
       
     } catch (e) {
@@ -666,7 +703,7 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
           emailRedirectTo: emailRedirectUrl,
         );
       } else {
-        throw e; // Re-throw if it's a different error
+        rethrow; // Re-throw if it's a different error
       }
     }
   }
@@ -674,11 +711,19 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
   Future<void> _storeRegistrationDataTemporarily() async {
     // Store registration data in SharedPreferences for persistence during verification
     try {
+      // Validate essential fields before storing
+      if (_registrationData.email.isEmpty) {
+        debugPrint('⚠️ Email is empty, cannot store registration data');
+        return;
+      }
+      
       final prefs = await SharedPreferences.getInstance();
       final registrationJson = jsonEncode(_registrationData.toJson());
       await prefs.setString('pending_employer_registration', registrationJson);
       await prefs.setString('pending_employer_email', _registrationData.email);
       debugPrint('💾 Stored registration data temporarily for persistence');
+      debugPrint('💾 Email stored: ${_registrationData.email}');
+      debugPrint('💾 Company name stored: ${_registrationData.companyName}');
     } catch (e) {
       debugPrint('⚠️ Failed to store registration data temporarily: $e');
     }
@@ -690,6 +735,20 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
     // For now, we'll use a simple approach with the existing service
     
     try {
+      // Validate essential fields before proceeding
+      if (_registrationData.email.isEmpty) {
+        debugPrint('❌ Email is empty, cannot proceed with registration');
+        throw Exception('Email is required for registration');
+      }
+      
+      if (_registrationData.companyName.isEmpty) {
+        debugPrint('❌ Company name is empty, cannot proceed with registration');
+        throw Exception('Company name is required for registration');
+      }
+      
+      debugPrint('📝 Storing registration data with email: ${_registrationData.email}');
+      debugPrint('📝 Company name: ${_registrationData.companyName}');
+      
       // Call the registration service to store the data
       final result = await EmployerRegistrationService.registerEmployer(
         registrationData: _registrationData,
@@ -697,6 +756,12 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
       
       if (result['success'] != true) {
         throw Exception(result['message'] ?? 'Failed to store registration data');
+      }
+      
+      // Check if registration was already completed
+      if (result['alreadyCompleted'] == true) {
+        debugPrint('✅ Registration already completed, skipping duplicate call');
+        return;
       }
       
     } catch (e) {
@@ -778,13 +843,6 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
           onPrevious: _previousStep,
         );
       case 3:
-        return EmployerRegistrationDocumentsScreen(
-          registrationData: _registrationData,
-          onDataChanged: _updateRegistrationData,
-          onNext: _nextStep,
-          onPrevious: _previousStep,
-        );
-      case 4:
         return EmployerRegistrationReviewScreen(
           registrationData: _registrationData,
           onSubmit: _submitRegistration,
@@ -799,12 +857,14 @@ class _EmployerRegistrationScreenState extends State<EmployerRegistrationScreen>
 
   @override
   Widget build(BuildContext context) {
-    // Periodically check email verification status
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted && !_isEmailVerified) {
-        _checkEmailVerification();
-      }
-    });
+    // Only periodically check email verification if user has submitted registration
+    if (_hasSubmittedRegistration) {
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted && !_isEmailVerified) {
+          _checkEmailVerification();
+        }
+      });
+    }
 
     return Scaffold(
       backgroundColor: Colors.white,

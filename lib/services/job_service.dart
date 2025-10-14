@@ -1,14 +1,137 @@
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
-import 'dart:typed_data';
 import '../config/app_config.dart';
+import 'onesignal_notification_service.dart';
+import 'admin_service.dart';
 
 class JobService {
   static final SupabaseClient _supabase = Supabase.instance.client;
 
-  // Get all jobs
+  // Get all available job types
+  static Future<List<Map<String, dynamic>>> getJobTypes() async {
+    try {
+      final response = await _supabase
+          .from('job_types')
+          .select('*')
+          .eq('is_active', true)
+          .order('sort_order', ascending: true);
+      
+      return List<Map<String, dynamic>>.from(response);
+    } catch (e) {
+      debugPrint('Error fetching job types: $e');
+      return [];
+    }
+  }
+
+  // Get job type ids and primary flag for a specific job
+  static Future<List<Map<String, dynamic>>> getJobTypesForJob(String jobId) async {
+    try {
+      final response = await _supabase
+          .from('job_job_types')
+          .select('job_type_id,is_primary')
+          .eq('job_id', jobId)
+          .order('created_at', ascending: true);
+
+      return List<Map<String, dynamic>>.from(response);
+    } catch (e) {
+      debugPrint('Error fetching job types for job: $e');
+      return [];
+    }
+  }
+
+  // Replace a job's job types with the provided set and primary flag
+  static Future<bool> setJobTypesForJob({
+    required String jobId,
+    required List<String> jobTypeIds,
+    String? primaryJobTypeId,
+  }) async {
+    try {
+      // Clear existing relations
+      await _supabase.from('job_job_types').delete().eq('job_id', jobId);
+
+      if (jobTypeIds.isEmpty) {
+        return true; // nothing to insert
+      }
+
+      final rows = jobTypeIds.map((id) => {
+            'job_id': jobId,
+            'job_type_id': id,
+            'is_primary': primaryJobTypeId == id ||
+                (primaryJobTypeId == null && id == jobTypeIds.first),
+          }).toList();
+
+      await _supabase.from('job_job_types').insert(rows);
+
+      return true;
+    } catch (e) {
+      debugPrint('Error setting job types for job: $e');
+      return false;
+    }
+  }
+
+  // Get all jobs with multiple job types (OPTIMIZED with stored procedure)
   static Future<List<Map<String, dynamic>>> getAllJobs() async {
+    try {
+      // Use optimized stored procedure for faster data fetching
+      final response = await _supabase.rpc('get_all_jobs_with_details');
+      
+      if (response == null) {
+        debugPrint('⚠️ No response from get_all_jobs_with_details, using fallback');
+        return await _getAllJobsFallback();
+      }
+      
+      // Process the response to match expected format
+      final jobs = List<Map<String, dynamic>>.from(response);
+      
+      for (final job in jobs) {
+        // Transform company data to match old format
+        job['companies'] = {
+          'id': job['company_id'],
+          'name': job['company_name'],
+          'logo_url': job['company_logo_url'],
+          'about': job['company_about'],
+          'profile_url': job['company_profile_url'],
+          'is_public': job['company_is_public'],
+          'industry': job['company_industry'],
+          'company_size': job['company_size'],
+        };
+        
+        // job_types is already in JSONB array format from the procedure
+        // Decode it from JSON if needed
+        if (job['job_types'] is String) {
+          job['job_types'] = jsonDecode(job['job_types']);
+        }
+        
+        // Find primary job type
+        final jobTypes = job['job_types'] as List?;
+        job['primary_job_type'] = jobTypes?.firstWhere(
+          (jt) => jt['is_primary'] == true,
+          orElse: () => null,
+        );
+        
+        // Remove individual company fields to keep clean structure
+        job.remove('company_name');
+        job.remove('company_logo_url');
+        job.remove('company_about');
+        job.remove('company_profile_url');
+        job.remove('company_is_public');
+        job.remove('company_industry');
+        job.remove('company_size');
+      }
+      
+      debugPrint('✅ Fetched ${jobs.length} jobs using optimized procedure');
+      return jobs;
+    } catch (e) {
+      debugPrint('❌ Error fetching jobs with procedure: $e');
+      debugPrint('⚠️ Falling back to traditional query');
+      return await _getAllJobsFallback();
+    }
+  }
+
+  // Fallback method using traditional query (in case procedure fails)
+  static Future<List<Map<String, dynamic>>> _getAllJobsFallback() async {
     try {
       final response = await _supabase
           .from('jobs')
@@ -19,15 +142,138 @@ class JobService {
               name,
               logo_url,
               about
+            ),
+            job_job_types (
+              is_primary,
+              job_types (
+                id,
+                name,
+                display_name,
+                description
+              )
             )
           ''')
           .eq('status', 'open')
           .order('created_at', ascending: false);
       
-      return List<Map<String, dynamic>>.from(response);
+      // Process the response to include job types in a more accessible format
+      final jobs = List<Map<String, dynamic>>.from(response);
+      for (final job in jobs) {
+        final jobTypes = (job['job_job_types'] as List?)
+            ?.map((jjt) => jjt['job_types'])
+            .cast<Map<String, dynamic>>()
+            .toList() ?? [];
+        
+        // Find primary job type
+        final primaryJobType = (job['job_job_types'] as List?)
+            ?.where((jjt) => jjt['is_primary'] == true)
+            .map((jjt) => jjt['job_types'])
+            .cast<Map<String, dynamic>>()
+            .firstOrNull;
+        
+        job['job_types'] = jobTypes;
+        job['primary_job_type'] = primaryJobType;
+      }
+      
+      return jobs;
     } catch (e) {
-      debugPrint('Error fetching jobs: $e');
+      debugPrint('Error fetching jobs (fallback): $e');
       return [];
+    }
+  }
+
+  // Get all jobs with saved status for user (SUPER OPTIMIZED - single query)
+  static Future<List<Map<String, dynamic>>> getAllJobsWithSavedStatus(String userId) async {
+    try {
+      // Use super-optimized stored procedure that includes saved status
+      final response = await _supabase.rpc('get_all_jobs_with_saved_status', 
+        params: {'user_id_param': userId});
+      
+      if (response == null) {
+        debugPrint('⚠️ No response from get_all_jobs_with_saved_status');
+        return [];
+      }
+      
+      // Process the response
+      final jobs = List<Map<String, dynamic>>.from(response);
+      
+      for (final job in jobs) {
+        // Transform company data to match expected format
+        job['companies'] = {
+          'id': job['company_id'],
+          'name': job['company_name'],
+          'logo_url': job['company_logo_url'],
+          'about': job['company_about'],
+          'profile_url': job['company_profile_url'],
+          'is_public': job['company_is_public'],
+          'industry': job['company_industry'],
+          'company_size': job['company_size'],
+        };
+        
+        // job_types is already in JSONB array format
+        if (job['job_types'] is String) {
+          job['job_types'] = jsonDecode(job['job_types']);
+        }
+        
+        // Find primary job type
+        final jobTypes = job['job_types'] as List?;
+        job['primary_job_type'] = jobTypes?.firstWhere(
+          (jt) => jt['is_primary'] == true,
+          orElse: () => null,
+        );
+        
+        // Remove individual company fields
+        job.remove('company_name');
+        job.remove('company_logo_url');
+        job.remove('company_about');
+        job.remove('company_profile_url');
+        job.remove('company_is_public');
+        job.remove('company_industry');
+        job.remove('company_size');
+      }
+      
+      debugPrint('✅ Fetched ${jobs.length} jobs with saved status in single query');
+      return jobs;
+    } catch (e) {
+      debugPrint('❌ Error fetching jobs with saved status: $e');
+      return [];
+    }
+  }
+
+  // Get saved jobs in bulk (OPTIMIZED)
+  static Future<Map<String, bool>> getSavedJobsMap(String userId) async {
+    try {
+      final response = await _supabase.rpc('get_saved_jobs_for_user',
+        params: {'user_id_param': userId});
+      
+      if (response == null) return {};
+      
+      final savedJobsList = List<Map<String, dynamic>>.from(response);
+      final savedJobsMap = <String, bool>{};
+      
+      for (final item in savedJobsList) {
+        savedJobsMap[item['job_id'] as String] = true;
+      }
+      
+      debugPrint('✅ Fetched ${savedJobsMap.length} saved jobs in single query');
+      return savedJobsMap;
+    } catch (e) {
+      debugPrint('❌ Error fetching saved jobs map: $e');
+      return {};
+    }
+  }
+
+  // Get jobs cache timestamp for cache validation
+  static Future<DateTime?> getJobsCacheTimestamp() async {
+    try {
+      final response = await _supabase.rpc('get_jobs_cache_timestamp');
+      
+      if (response == null) return null;
+      
+      return DateTime.parse(response as String);
+    } catch (e) {
+      debugPrint('❌ Error fetching cache timestamp: $e');
+      return null;
     }
   }
 
@@ -58,13 +304,38 @@ class JobService {
   // Get user's company
   static Future<Map<String, dynamic>?> getUserCompany(String userId) async {
     try {
-      final response = await _supabase
+      // 1) Prefer a company that already has jobs (so employer home shows postings)
+      try {
+        final withJobs = await _supabase
+            .from('companies')
+            .select('''
+              *,
+              jobs:jobs!inner (id)
+            ''')
+            .eq('owner_id', userId)
+            .order('created_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
+
+        if (withJobs != null) {
+          // Remove joined jobs field to keep original shape
+          withJobs.remove('jobs');
+          return withJobs;
+        }
+      } catch (_) {
+        // Ignore and fallback below
+      }
+
+      // 2) Fallback: return the most recently created company for this owner
+      final latest = await _supabase
           .from('companies')
           .select('*')
           .eq('owner_id', userId)
+          .order('created_at', ascending: false)
+          .limit(1)
           .maybeSingle();
       
-      return response;
+      return latest;
     } catch (e) {
       debugPrint('Error fetching user company: $e');
       return null;
@@ -124,18 +395,20 @@ class JobService {
     }
   }
 
-  // Create job posting
+  // Create job posting with multiple job types
   static Future<Map<String, dynamic>?> createJob({
     required String companyId,
     required String title,
     required String description,
     required String location,
-    required String type,
+    required List<String> jobTypeIds,
+    String? primaryJobTypeId,
     int? salaryMin,
     int? salaryMax,
     String? experienceLevel,
   }) async {
     try {
+      // Start a transaction by creating the job first
       final response = await _supabase
           .from('jobs')
           .insert({
@@ -143,7 +416,7 @@ class JobService {
             'title': title,
             'description': description,
             'location': location,
-            'type': type,
+            'type': 'full_time', // Keep for backward compatibility, will be replaced by job_types
             'salary_min': salaryMin,
             'salary_max': salaryMax,
             'experience_level': experienceLevel,
@@ -151,6 +424,30 @@ class JobService {
           })
           .select()
           .single();
+      
+      final jobId = response['id'];
+      try {
+        final user = _supabase.auth.currentUser;
+        await AdminService.logEvent(
+          actionType: 'job_created',
+          targetUserId: user?.id,
+          targetCompanyId: companyId,
+          data: {'job_id': jobId, 'title': title},
+        );
+      } catch (_) {}
+      
+      // Add job types to the job
+      if (jobTypeIds.isNotEmpty) {
+        final jobJobTypesData = jobTypeIds.map((jobTypeId) => {
+          'job_id': jobId,
+          'job_type_id': jobTypeId,
+          'is_primary': primaryJobTypeId == jobTypeId || (primaryJobTypeId == null && jobTypeId == jobTypeIds.first),
+        }).toList();
+        
+        await _supabase
+            .from('job_job_types')
+            .insert(jobJobTypesData);
+      }
       
       return response;
     } catch (e) {
@@ -186,6 +483,12 @@ class JobService {
           .from('jobs')
           .update(updateData)
           .eq('id', jobId);
+      try {
+        await AdminService.logEvent(
+          actionType: 'job_updated',
+          data: {'job_id': jobId, 'updated_fields': updateData.keys.toList()},
+        );
+      } catch (_) {}
       
       return true;
     } catch (e) {
@@ -198,6 +501,9 @@ class JobService {
   static Future<bool> archiveJob(String jobId) async {
     try {
       await _supabase.rpc('archive_job', params: {'job_id_to_archive': jobId});
+      try {
+        await AdminService.logEvent(actionType: 'job_archived', data: {'job_id': jobId});
+      } catch (_) {}
       return true;
     } catch (e) {
       debugPrint('Error archiving job: $e');
@@ -233,6 +539,9 @@ class JobService {
   static Future<bool> restoreArchivedJob(String archivedJobId) async {
     try {
       await _supabase.rpc('restore_archived_job', params: {'archived_job_id_to_restore': archivedJobId});
+      try {
+        await AdminService.logEvent(actionType: 'job_restored', data: {'archived_job_id': archivedJobId});
+      } catch (_) {}
       return true;
     } catch (e) {
       debugPrint('Error restoring archived job: $e');
@@ -316,6 +625,52 @@ class JobService {
             'notes': 'Application submitted',
             'updated_by': applicantId,
           });
+
+      // Log application submission
+      try {
+        await AdminService.logEvent(
+          actionType: 'application_submitted',
+          targetUserId: applicantId,
+          data: {'application_id': response['id'], 'job_id': jobId},
+        );
+      } catch (_) {}
+
+      // Send notifications for successful application
+      try {
+        // Get job and employer details for notifications (derive employer via companies.owner_id)
+        final jobDetails = await _supabase
+            .from('jobs')
+            .select('''
+              title,
+              companies (
+                owner_id,
+                name
+              )
+            ''')
+            .eq('id', jobId)
+            .single();
+
+        final applicantProfile = await _supabase
+            .from('profiles')
+            .select('full_name')
+            .eq('id', applicantId)
+            .single();
+
+        // Send notifications
+        await OneSignalNotificationService.sendApplicationSubmittedNotification(
+          applicantId: applicantId,
+          employerId: jobDetails['companies']?['owner_id'] ?? '',
+          jobId: jobId,
+          jobTitle: jobDetails['title'],
+          applicantName: applicantProfile['full_name'] ?? 'Unknown',
+          applicationId: response['id'],
+        );
+
+        debugPrint('✅ Application notifications sent successfully');
+      } catch (notificationError) {
+        debugPrint('❌ Error sending application notifications: $notificationError');
+        // Don't fail the application if notifications fail
+      }
 
       return response;
     } catch (e) {
@@ -423,6 +778,29 @@ class JobService {
       final user = _supabase.auth.currentUser;
       if (user == null) throw Exception('User not authenticated');
 
+      // Get current application details before updating
+      final currentApplication = await _supabase
+          .from('job_applications')
+          .select('''
+            id,
+            status,
+            applicant_id,
+            job_id,
+            jobs (
+              id,
+              title,
+              employer_id
+            )
+          ''')
+          .eq('id', applicationId)
+          .single();
+
+      final oldStatus = currentApplication['status'];
+      final applicantId = currentApplication['applicant_id'];
+      final jobId = currentApplication['job_id'];
+      final job = currentApplication['jobs'];
+      final jobTitle = job['title'];
+
       final response = await _supabase.rpc('update_application_status', params: {
         'application_uuid': applicationId,
         'new_status': newStatus,
@@ -433,6 +811,35 @@ class JobService {
       });
 
       if (response['success'] == true) {
+        try {
+          await AdminService.logEvent(
+            actionType: 'application_status_updated',
+            data: {
+              'application_id': applicationId,
+              'old': oldStatus,
+              'new': newStatus,
+            },
+          );
+        } catch (_) {}
+        // Send notification to applicant about status update
+        try {
+          await OneSignalNotificationService.sendApplicationStatusUpdateNotification(
+            applicantId: applicantId,
+            jobId: jobId,
+            jobTitle: jobTitle,
+            oldStatus: oldStatus,
+            newStatus: newStatus,
+            applicationId: applicationId,
+            message: interviewNotes,
+            interviewDate: interviewScheduledAt != null ? DateTime.parse(interviewScheduledAt) : null,
+          );
+
+          debugPrint('✅ Application status update notification sent successfully');
+        } catch (notificationError) {
+          debugPrint('❌ Error sending status update notification: $notificationError');
+          // Don't fail the status update if notifications fail
+        }
+
         return {
           'success': true,
           'message': 'Application status updated successfully',
@@ -487,6 +894,41 @@ class JobService {
             .delete()
             .eq('job_id', jobId)
             .eq('seeker_id', userId);
+
+        // Send notification for job unsave
+        try {
+          final jobDetails = await _supabase
+              .from('jobs')
+              .select('''
+                title,
+                companies (
+                  owner_id
+                )
+              ''')
+              .eq('id', jobId)
+              .single();
+
+          final applicantProfile = await _supabase
+              .from('profiles')
+              .select('full_name')
+              .eq('id', userId)
+              .single();
+
+          await OneSignalNotificationService.sendJobSaveNotification(
+            applicantId: userId,
+            employerId: jobDetails['companies']?['owner_id'] ?? '',
+            jobId: jobId,
+            jobTitle: jobDetails['title'],
+            applicantName: applicantProfile['full_name'] ?? 'Unknown',
+            isSaved: false,
+          );
+
+          debugPrint('✅ Job unsave notification sent successfully');
+        } catch (notificationError) {
+          debugPrint('❌ Error sending job unsave notification: $notificationError');
+          // Don't fail the operation if notifications fail
+        }
+
         return false; // Job unsaved
       } else {
         // Add to saved
@@ -496,6 +938,41 @@ class JobService {
               'job_id': jobId,
               'seeker_id': userId,
             });
+
+        // Send notification for job save
+        try {
+          final jobDetails = await _supabase
+              .from('jobs')
+              .select('''
+                title,
+                companies (
+                  owner_id
+                )
+              ''')
+              .eq('id', jobId)
+              .single();
+
+          final applicantProfile = await _supabase
+              .from('profiles')
+              .select('full_name')
+              .eq('id', userId)
+              .single();
+
+          await OneSignalNotificationService.sendJobSaveNotification(
+            applicantId: userId,
+            employerId: jobDetails['companies']?['owner_id'] ?? '',
+            jobId: jobId,
+            jobTitle: jobDetails['title'],
+            applicantName: applicantProfile['full_name'] ?? 'Unknown',
+            isSaved: true,
+          );
+
+          debugPrint('✅ Job save notification sent successfully');
+        } catch (notificationError) {
+          debugPrint('❌ Error sending job save notification: $notificationError');
+          // Don't fail the operation if notifications fail
+        }
+
         return true; // Job saved
       }
     } catch (e) {
@@ -708,34 +1185,225 @@ Generate the cover letter now:
     return null;
   }
 
-  /// Withdraw a job application
-  static Future<bool> withdrawApplication({
+  /// Withdraw a job application using stored procedure for comprehensive tracking
+  static Future<Map<String, dynamic>> withdrawApplication({
     required String applicationId,
     String? withdrawalReason,
+    String? withdrawalCategory,
+  }) async {
+    try {
+      final supabase = Supabase.instance.client;
+      final user = supabase.auth.currentUser;
+      
+      if (user == null) {
+        return {
+          'success': false,
+          'error': 'User not authenticated',
+          'code': 'AUTH_ERROR',
+        };
+      }
+
+      debugPrint('🔄 Withdrawing application: $applicationId');
+
+      // Call the database function for atomic withdrawal with tracking
+      final response = await supabase.rpc(
+        'withdraw_application',
+        params: {
+          'p_application_id': applicationId,
+          'p_withdrawal_reason': withdrawalReason,
+          'p_withdrawal_category': withdrawalCategory,
+        },
+      );
+
+      debugPrint('📥 Withdrawal response: $response');
+
+      // Parse the JSON response
+      if (response is Map) {
+        final success = response['success'] as bool? ?? false;
+        
+        if (success) {
+          debugPrint('✅ Application withdrawn successfully: $applicationId');
+          
+          // Send notifications for successful withdrawal
+          try {
+            // Get application details for notifications
+            final applicationDetails = await supabase
+                .from('job_applications')
+                .select('''
+                  id,
+                  applicant_id,
+                  job_id,
+                  jobs (
+                    id,
+                    title,
+                    companies (
+                      owner_id
+                    )
+                  )
+                ''')
+                .eq('id', applicationId)
+                .single();
+
+            final applicantId = applicationDetails['applicant_id'];
+            final jobId = applicationDetails['job_id'];
+            final job = applicationDetails['jobs'];
+            final jobTitle = job['title'];
+            final employerId = job['companies']?['owner_id'];
+
+            // Get applicant profile for name
+            final applicantProfile = await supabase
+                .from('profiles')
+                .select('full_name')
+                .eq('id', applicantId)
+                .single();
+
+            // Send notifications
+            await OneSignalNotificationService.sendApplicationWithdrawalNotification(
+              applicantId: applicantId,
+              employerId: employerId,
+              jobId: jobId,
+              jobTitle: jobTitle,
+              applicantName: applicantProfile['full_name'] ?? 'Unknown',
+              applicationId: applicationId,
+              withdrawalReason: withdrawalReason ?? 'No reason provided',
+              withdrawalCategory: withdrawalCategory,
+            );
+
+            debugPrint('✅ Application withdrawal notifications sent successfully');
+          } catch (notificationError) {
+            debugPrint('❌ Error sending withdrawal notifications: $notificationError');
+            // Don't fail the withdrawal if notifications fail
+          }
+
+          return {
+            'success': true,
+            'message': response['message'] ?? 'Application withdrawn successfully',
+            'applicationId': response['applicationId'],
+            'withdrawnAt': response['withdrawnAt'],
+          };
+        } else {
+          debugPrint('❌ Withdrawal failed: ${response['error']}');
+          return {
+            'success': false,
+            'error': response['error'] ?? 'Unknown error',
+            'code': response['code'] ?? 'UNKNOWN_ERROR',
+          };
+        }
+      } else {
+        debugPrint('❌ Unexpected response format: $response');
+        return {
+          'success': false,
+          'error': 'Unexpected response from server',
+          'code': 'INVALID_RESPONSE',
+        };
+      }
+    } catch (e) {
+      debugPrint('❌ Error withdrawing application: $e');
+      return {
+        'success': false,
+        'error': 'Failed to withdraw application: ${e.toString()}',
+        'code': 'SYSTEM_ERROR',
+      };
+    }
+  }
+
+  /// Get withdrawal statistics for admin/analytics
+  static Future<Map<String, dynamic>> getWithdrawalStatistics({
+    String? jobId,
+    String? employerId,
+    DateTime? startDate,
+    DateTime? endDate,
   }) async {
     try {
       final supabase = Supabase.instance.client;
       
-      // Update application status to 'withdrawn'
-      final response = await supabase
-          .from('job_applications')
-          .update({
-            'status': 'withdrawn',
-            'withdrawal_reason': withdrawalReason,
-            'withdrawn_at': DateTime.now().toIso8601String(),
-          })
-          .eq('id', applicationId);
-
-      if (response.error != null) {
-        debugPrint('❌ Failed to withdraw application: ${response.error}');
-        return false;
+      var query = supabase
+          .from('withdrawal_tracking')
+          .select('*');
+      
+      if (jobId != null) {
+        query = query.eq('job_id', jobId);
       }
-
-      debugPrint('✅ Application withdrawn successfully');
-      return true;
+      
+      if (employerId != null) {
+        query = query.eq('employer_id', employerId);
+      }
+      
+      if (startDate != null) {
+        query = query.gte('withdrawn_at', startDate.toIso8601String());
+      }
+      
+      if (endDate != null) {
+        query = query.lte('withdrawn_at', endDate.toIso8601String());
+      }
+      
+      final response = await query;
+      final withdrawals = List<Map<String, dynamic>>.from(response);
+      
+      // Calculate statistics
+      final totalWithdrawals = withdrawals.length;
+      final categoryBreakdown = <String, int>{};
+      final averageDaysSinceApplication = withdrawals.isNotEmpty
+          ? withdrawals.map((w) => w['days_since_application'] as int? ?? 0)
+              .reduce((a, b) => a + b) / withdrawals.length
+          : 0.0;
+      
+      for (final withdrawal in withdrawals) {
+        final category = withdrawal['withdrawal_category'] as String? ?? 'Other';
+        categoryBreakdown[category] = (categoryBreakdown[category] ?? 0) + 1;
+      }
+      
+      return {
+        'total_withdrawals': totalWithdrawals,
+        'category_breakdown': categoryBreakdown,
+        'average_days_since_application': averageDaysSinceApplication,
+        'withdrawals': withdrawals,
+      };
     } catch (e) {
-      debugPrint('❌ Error withdrawing application: $e');
-      return false;
+      debugPrint('❌ Error fetching withdrawal statistics: $e');
+      return {
+        'total_withdrawals': 0,
+        'category_breakdown': {},
+        'average_days_since_application': 0.0,
+        'withdrawals': [],
+      };
+    }
+  }
+
+  /// Fetch all applications for a company with optimized stored procedure
+  static Future<List<Map<String, dynamic>>> getCompanyApplicationsOptimized(String companyId) async {
+    try {
+      final response = await _supabase
+          .rpc('get_company_applications_with_details', params: {'p_company_id': companyId})
+          .select();
+      
+      final List<Map<String, dynamic>> applications = [];
+      
+      for (final row in response as List) {
+        final application = Map<String, dynamic>.from(row['application_data'] ?? {});
+        final job = Map<String, dynamic>.from(row['job_data'] ?? {});
+        final profile = Map<String, dynamic>.from(row['applicant_profile'] ?? {});
+        final aiData = row['ai_screening_data'];
+        
+        // Decode JSONB arrays if they're strings
+        if (job['job_types'] is String) {
+          job['job_types'] = jsonDecode(job['job_types']);
+        }
+        
+        // Merge all data into application object
+        application['job'] = job;
+        application['profiles'] = profile;
+        if (aiData != null) {
+          application['ai_screening'] = Map<String, dynamic>.from(aiData);
+        }
+        
+        applications.add(application);
+      }
+      
+      return applications;
+    } catch (e) {
+      debugPrint('Error fetching optimized company applications: $e');
+      return [];
     }
   }
 }

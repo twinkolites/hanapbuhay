@@ -33,7 +33,6 @@ class _ApplicationsScreenState extends State<ApplicationsScreen> with TickerProv
   late Animation<Offset> _slideAnimation;
   
   // Safe references to inherited widgets
-  ScaffoldMessengerState? _scaffoldMessenger;
   NavigatorState? _navigator;
 
   // Color palette
@@ -50,6 +49,7 @@ class _ApplicationsScreenState extends State<ApplicationsScreen> with TickerProv
     'interview',
     'hired',
     'rejected',
+    'withdrawn',
   ];
 
   @override
@@ -83,7 +83,6 @@ class _ApplicationsScreenState extends State<ApplicationsScreen> with TickerProv
   void didChangeDependencies() {
     super.didChangeDependencies();
     // Safely capture references to inherited widgets
-    _scaffoldMessenger = ScaffoldMessenger.maybeOf(context);
     _navigator = Navigator.maybeOf(context);
   }
 
@@ -92,7 +91,6 @@ class _ApplicationsScreenState extends State<ApplicationsScreen> with TickerProv
     _animationController.dispose();
     
     // Clear references to inherited widgets
-    _scaffoldMessenger = null;
     _navigator = null;
     
     super.dispose();
@@ -554,7 +552,7 @@ class _ApplicationsScreenState extends State<ApplicationsScreen> with TickerProv
         ),
       ),
       child: Text(
-        '$value',
+        value,
         style: TextStyle(
           color: color,
           fontSize: 10,
@@ -970,22 +968,27 @@ class _ApplicationsScreenState extends State<ApplicationsScreen> with TickerProv
     final status = application['status'] ?? 'applied';
     final isViewed = application['viewed_by_employer'] ?? false;
     final aiResult = _getAIResult(application['id']);
+    final isWithdrawn = status == 'withdrawn';
     // Removed unused variables for cleaner code
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: isWithdrawn ? Colors.grey.shade50 : Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: paleGreen.withValues(alpha: 0.3),
-          width: 1,
+          color: isWithdrawn 
+              ? Colors.grey.withValues(alpha: 0.4)
+              : paleGreen.withValues(alpha: 0.3),
+          width: isWithdrawn ? 2 : 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: darkTeal.withValues(alpha: 0.05),
-            blurRadius: 10,
+            color: isWithdrawn 
+                ? Colors.grey.withValues(alpha: 0.1)
+                : darkTeal.withValues(alpha: 0.05),
+            blurRadius: isWithdrawn ? 5 : 10,
             offset: const Offset(0, 2),
           ),
         ],
@@ -993,6 +996,51 @@ class _ApplicationsScreenState extends State<ApplicationsScreen> with TickerProv
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Withdrawal Banner (if withdrawn)
+          if (isWithdrawn) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: Colors.orange.withValues(alpha: 0.3),
+                  width: 1,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.warning_amber_rounded,
+                    color: Colors.orange.shade700,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Application Withdrawn',
+                      style: TextStyle(
+                        color: Colors.orange.shade800,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  if (application['withdrawn_at'] != null)
+                    Text(
+                      _formatDate(application['withdrawn_at']),
+                      style: TextStyle(
+                        color: Colors.orange.shade600,
+                        fontSize: 10,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          
           // Header row - More compact
           Row(
             children: [
@@ -1065,13 +1113,26 @@ class _ApplicationsScreenState extends State<ApplicationsScreen> with TickerProv
                     Row(
                       children: [
                         Expanded(
-                          child: Text(
-                      _getApplicantName(application),
-                      style: const TextStyle(
-                        color: darkTeal,
-                              fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                      ),
+                          child: Row(
+                            children: [
+                              Text(
+                                _getApplicantName(application),
+                                style: TextStyle(
+                                  color: isWithdrawn ? Colors.grey.shade600 : darkTeal,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                  decoration: isWithdrawn ? TextDecoration.lineThrough : TextDecoration.none,
+                                ),
+                              ),
+                              if (isWithdrawn) ...[
+                                const SizedBox(width: 6),
+                                Icon(
+                                  Icons.cancel_outlined,
+                                  color: Colors.grey.shade500,
+                                  size: 14,
+                                ),
+                              ],
+                            ],
                           ),
                         ),
                         // Status badge - Smaller
@@ -1161,6 +1222,65 @@ class _ApplicationsScreenState extends State<ApplicationsScreen> with TickerProv
               
           const SizedBox(height: 12),
           
+          // Withdrawal reason (if withdrawn)
+          if (status == 'withdrawn' && application['withdrawal_reason'] != null && application['withdrawal_reason'].toString().isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: Colors.grey.withValues(alpha: 0.3),
+                  width: 1,
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    color: Colors.grey.shade600,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Withdrawal Reason:',
+                          style: TextStyle(
+                            color: Colors.grey.shade700,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          application['withdrawal_reason'],
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: 11,
+                          ),
+                        ),
+                        if (application['withdrawn_at'] != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'Withdrawn: ${_formatDate(application['withdrawn_at'])}',
+                            style: TextStyle(
+                              color: Colors.grey.shade500,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          
           // Compact cover letter preview (if exists)
           if (application['cover_letter'] != null && application['cover_letter'].toString().isNotEmpty)
               Container(
@@ -1188,10 +1308,17 @@ class _ApplicationsScreenState extends State<ApplicationsScreen> with TickerProv
           // Action buttons
           Column(
             children: [
-              // Status Quick Actions
-              _buildCompactStatusActions(application),
+              // Status Quick Actions (disabled for withdrawn)
+              if (!isWithdrawn) ...[
+                _buildCompactStatusActions(application),
+                const SizedBox(height: 8),
+              ],
               
-              const SizedBox(height: 8),
+              // Withdrawal Summary (if withdrawn)
+              if (isWithdrawn) ...[
+                _buildWithdrawalSummary(application),
+                const SizedBox(height: 12),
+              ],
               
               // Primary Action Buttons
               Row(
@@ -1202,8 +1329,12 @@ class _ApplicationsScreenState extends State<ApplicationsScreen> with TickerProv
                       icon: const Icon(Icons.history, size: 16),
                       label: const Text('History'),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: darkTeal,
-                        side: BorderSide(color: darkTeal.withValues(alpha: 0.3)),
+                        foregroundColor: isWithdrawn ? Colors.grey.shade600 : darkTeal,
+                        side: BorderSide(
+                          color: isWithdrawn 
+                              ? Colors.grey.withValues(alpha: 0.4)
+                              : darkTeal.withValues(alpha: 0.3)
+                        ),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),
@@ -1212,13 +1343,26 @@ class _ApplicationsScreenState extends State<ApplicationsScreen> with TickerProv
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () => _startChatWithApplicant(application),
-                      icon: const Icon(Icons.chat, size: 16),
-                      label: const Text('Chat'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: darkTeal,
-                        foregroundColor: Colors.white,
+                    child: OutlinedButton.icon(
+                      onPressed: isWithdrawn ? null : () => _startChatWithApplicant(application),
+                      icon: Icon(
+                        Icons.chat, 
+                        size: 16,
+                        color: isWithdrawn ? Colors.grey.shade400 : Colors.white,
+                      ),
+                      label: Text(
+                        'Chat',
+                        style: TextStyle(
+                          color: isWithdrawn ? Colors.grey.shade400 : Colors.white,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: isWithdrawn ? Colors.grey.shade100 : darkTeal,
+                        side: BorderSide(
+                          color: isWithdrawn 
+                              ? Colors.grey.withValues(alpha: 0.4)
+                              : darkTeal
+                        ),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),
@@ -1236,10 +1380,14 @@ class _ApplicationsScreenState extends State<ApplicationsScreen> with TickerProv
                 child: OutlinedButton.icon(
                   onPressed: () => _showApplicationDetails(application),
                   icon: const Icon(Icons.visibility, size: 16),
-                  label: const Text('View Details'),
+                  label: Text(isWithdrawn ? 'View Withdrawal Details' : 'View Details'),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: mediumSeaGreen,
-                    side: const BorderSide(color: mediumSeaGreen),
+                    foregroundColor: isWithdrawn ? Colors.grey.shade700 : mediumSeaGreen,
+                    side: BorderSide(
+                      color: isWithdrawn 
+                          ? Colors.grey.withValues(alpha: 0.4)
+                          : mediumSeaGreen
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
@@ -1254,9 +1402,143 @@ class _ApplicationsScreenState extends State<ApplicationsScreen> with TickerProv
     );
   }
 
+  // Withdrawal Summary Widget
+  Widget _buildWithdrawalSummary(Map<String, dynamic> application) {
+    final withdrawalReason = application['withdrawal_reason'] ?? 'No reason provided';
+    final withdrawnAt = application['withdrawn_at'];
+    final appliedAt = application['created_at'];
+    
+    // Calculate how long the application was active
+    String activeDuration = '';
+    if (withdrawnAt != null && appliedAt != null) {
+      try {
+        final appliedDate = DateTime.parse(appliedAt);
+        final withdrawnDate = DateTime.parse(withdrawnAt);
+        final duration = withdrawnDate.difference(appliedDate);
+        
+        if (duration.inDays > 0) {
+          activeDuration = 'Active for ${duration.inDays} day${duration.inDays == 1 ? '' : 's'}';
+        } else if (duration.inHours > 0) {
+          activeDuration = 'Active for ${duration.inHours} hour${duration.inHours == 1 ? '' : 's'}';
+        } else {
+          activeDuration = 'Active for ${duration.inMinutes} minute${duration.inMinutes == 1 ? '' : 's'}';
+        }
+      } catch (e) {
+        activeDuration = 'Duration unavailable';
+      }
+    }
+    
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: Colors.grey.withValues(alpha: 0.3),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.info_outline,
+                color: Colors.grey.shade600,
+                size: 16,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Withdrawal Summary',
+                style: TextStyle(
+                  color: Colors.grey.shade700,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          
+          // Reason
+          if (withdrawalReason.isNotEmpty) ...[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Reason: ',
+                  style: TextStyle(
+                    color: Colors.grey.shade600,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    withdrawalReason,
+                    style: TextStyle(
+                      color: Colors.grey.shade700,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+          ],
+          
+          // Duration and Date
+          Row(
+            children: [
+              if (activeDuration.isNotEmpty) ...[
+                Icon(
+                  Icons.schedule,
+                  color: Colors.grey.shade500,
+                  size: 12,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  activeDuration,
+                  style: TextStyle(
+                    color: Colors.grey.shade600,
+                    fontSize: 10,
+                  ),
+                ),
+                const SizedBox(width: 12),
+              ],
+              if (withdrawnAt != null) ...[
+                Icon(
+                  Icons.event,
+                  color: Colors.grey.shade500,
+                  size: 12,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  'Withdrawn: ${_formatDate(withdrawnAt)}',
+                  style: TextStyle(
+                    color: Colors.grey.shade600,
+                    fontSize: 10,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   // Compact Status Actions Widget
   Widget _buildCompactStatusActions(Map<String, dynamic> application) {
     final currentStatus = application['status'] ?? 'applied';
+    
+    // Don't show status actions for withdrawn or hired applications
+    if (currentStatus == 'withdrawn' || currentStatus == 'hired') {
+      return const SizedBox.shrink();
+    }
+    
     final statusWorkflow = _getStatusWorkflow(currentStatus);
     
     if (statusWorkflow.isEmpty) {
@@ -1333,6 +1615,8 @@ class _ApplicationsScreenState extends State<ApplicationsScreen> with TickerProv
         return 'Hired';
       case 'rejected':
         return 'Rejected';
+      case 'withdrawn':
+        return 'Withdrawn';
       default:
         return status.split('_').map((word) => 
           word[0].toUpperCase() + word.substring(1)
@@ -1354,6 +1638,8 @@ class _ApplicationsScreenState extends State<ApplicationsScreen> with TickerProv
         return mediumSeaGreen;
       case 'rejected':
         return Colors.red;
+      case 'withdrawn':
+        return Colors.grey;
       default:
         return darkTeal;
     }
@@ -1367,6 +1653,7 @@ class _ApplicationsScreenState extends State<ApplicationsScreen> with TickerProv
       case 'interview': return Icons.event;
       case 'hired': return Icons.check_circle;
       case 'rejected': return Icons.close;
+      case 'withdrawn': return Icons.cancel_outlined;
       default: return Icons.work;
     }
   }
@@ -1868,6 +2155,7 @@ class _StatusUpdateDialogState extends State<_StatusUpdateDialog> {
       case 'interview': return 'Interview';
       case 'hired': return 'Hired';
       case 'rejected': return 'Rejected';
+      case 'withdrawn': return 'Withdrawn';
       default: return status.split('_').map((word) => 
         word[0].toUpperCase() + word.substring(1)).join(' ');
     }
@@ -1881,6 +2169,7 @@ class _StatusUpdateDialogState extends State<_StatusUpdateDialog> {
       case 'interview': return Colors.purple;
       case 'hired': return mediumSeaGreen;
       case 'rejected': return Colors.red;
+      case 'withdrawn': return Colors.grey;
       default: return darkTeal;
     }
   }
@@ -1893,6 +2182,7 @@ class _StatusUpdateDialogState extends State<_StatusUpdateDialog> {
       case 'interview': return Icons.event;
       case 'hired': return Icons.check_circle;
       case 'rejected': return Icons.close;
+      case 'withdrawn': return Icons.cancel_outlined;
       default: return Icons.work;
     }
   }

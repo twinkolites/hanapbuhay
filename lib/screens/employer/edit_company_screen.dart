@@ -580,7 +580,7 @@ class _EditCompanyScreenState extends State<EditCompanyScreen> with TickerProvid
                 _isPublic = value;
               });
             },
-            activeColor: mediumSeaGreen,
+            activeThumbColor: mediumSeaGreen,
             activeTrackColor: paleGreen,
           ),
         ],

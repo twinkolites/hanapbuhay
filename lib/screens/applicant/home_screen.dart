@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:async';
 import '../../services/job_service.dart';
 import '../../services/job_recommendation_service.dart';
+import '../../services/onesignal_notification_service.dart';
 import 'profile_screen.dart';
 import 'jobs_screen.dart';
 import 'chat_list_screen.dart';
@@ -9,7 +11,8 @@ import 'apply_job_screen.dart';
 import 'applications_screen.dart';
 import 'saved_jobs_screen.dart';
 import 'job_details_screen.dart';
-import 'job_preferences_screen.dart';
+import 'calendar_screen.dart';
+import '../notifications_screen.dart';
 
 // Using Supabase.instance.client directly instead of global variable
 
@@ -29,11 +32,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _isRecommendationsLoading = false;
   Map<String, bool> _appliedJobs = {};
   Map<String, bool> _savedJobs = {};
-  bool _useAIRecommendations = true;
+  final bool _useAIRecommendations = true;
+  // Multiple job types support for recommendations
+  Map<String, List<Map<String, dynamic>>> _jobTypesByJobId = {};
+  Map<String, String> _jobTypeNames = {};
   
   // Statistics data
   int _appliedCount = 0;
   int _savedCount = 0;
+  int _unreadNotificationCount = 0;
+  
+  // Debouncing for save job toggle
+  Timer? _debounceTimer;
+  final Set<String> _pendingSaveOperations = {};
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
@@ -106,10 +117,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     // Initialize AI recommendation service
     await JobRecommendationService.initialize();
     
-    // Load recommendations and statistics
+    // Load recommendations, statistics, and notifications
     await Future.wait([
       _loadRecommendations(),
       _loadStatistics(),
+      _loadNotificationCount(),
     ]);
     
     if (mounted) {
@@ -134,6 +146,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       );
 
       await _checkAppliedJobs(recommendations);
+      await _loadJobTypeCatalog();
+      await _prefetchJobTypes(recommendations);
 
       if (mounted) {
         setState(() {
@@ -150,6 +164,41 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         });
       }
     }
+  }
+
+  Future<void> _loadJobTypeCatalog() async {
+    try {
+      final types = await JobService.getJobTypes();
+      final Map<String, String> names = {};
+      for (final t in types) {
+        final id = t['id']?.toString();
+        if (id != null) {
+          names[id] = (t['display_name'] ?? t['name'] ?? 'Unknown').toString();
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _jobTypeNames = names;
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _prefetchJobTypes(List<Map<String, dynamic>> jobs) async {
+    try {
+      final Map<String, List<Map<String, dynamic>>> temp = {};
+      for (final job in jobs) {
+        final jobId = job['id']?.toString();
+        if (jobId == null) continue;
+        final types = await JobService.getJobTypesForJob(jobId);
+        temp[jobId] = types;
+      }
+      if (mounted) {
+        setState(() {
+          _jobTypesByJobId = temp;
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _checkAppliedJobs(List<Map<String, dynamic>> jobs) async {
@@ -242,12 +291,30 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     await Future.wait([
       _loadRecommendations(),
       _loadStatistics(),
+      _loadNotificationCount(),
     ]);
+  }
+
+  Future<void> _loadNotificationCount() async {
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user != null) {
+        final count = await OneSignalNotificationService.getUnreadCount(user.id);
+        if (mounted) {
+          setState(() {
+            _unreadNotificationCount = count;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading notification count: $e');
+    }
   }
 
   @override
   void dispose() {
     _animationController.dispose();
+    _debounceTimer?.cancel();
     super.dispose();
   }
 
@@ -357,9 +424,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   _buildActionButton(
                     icon: Icons.notifications_outlined,
                     onTap: () {
-                      // TODO: Implement notifications
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const NotificationsScreen(),
+                        ),
+                      ).then((_) {
+                        // Refresh notification count when returning
+                        _loadNotificationCount();
+                      });
                     },
-                    badge: true,
+                    badge: _unreadNotificationCount > 0,
+                    badgeCount: _unreadNotificationCount,
                   ),
                   const SizedBox(width: 12),
                   _buildProfileAvatar(),
@@ -381,6 +457,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     required IconData icon,
     required VoidCallback onTap,
     bool badge = false,
+    int badgeCount = 0,
   }) {
     return GestureDetector(
       onTap: onTap,
@@ -409,14 +486,26 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             ),
             if (badge)
               Positioned(
-                top: 8,
-                right: 8,
+                top: 6,
+                right: 6,
                 child: Container(
-                  width: 8,
-                  height: 8,
+                  padding: const EdgeInsets.all(2),
+                  constraints: const BoxConstraints(
+                    minWidth: 16,
+                    minHeight: 16,
+                  ),
                   decoration: const BoxDecoration(
                     color: Colors.red,
                     shape: BoxShape.circle,
+                  ),
+                  child: Text(
+                    badgeCount > 99 ? '99+' : badgeCount.toString(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
                   ),
                 ),
               ),
@@ -685,62 +774,26 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   ),
                 ],
               ),
-              Row(
-                children: [
-                  GestureDetector(
-                    onTap: () async {
-                      final result = await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const JobPreferencesScreen(),
-                        ),
-                      );
-                      if (result == true) {
-                        await _loadRecommendations();
-                      }
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                        color: lightMint,
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: paleGreen),
-                      ),
-                      child: Icon(
-                        Icons.tune,
-                        color: mediumSeaGreen,
-                        size: 14,
-                      ),
+              TextButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const JobsScreen(),
                     ),
+                  );
+                },
+                child: Text(
+                  'See All',
+                  style: TextStyle(
+                    color: mediumSeaGreen,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w600,
                   ),
-                  const SizedBox(width: 6),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const JobsScreen(),
-                        ),
-                      );
-                    },
-                    child: Text(
-                      'See All',
-                      style: TextStyle(
-                        color: mediumSeaGreen,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ],
           ),
-          
-          const SizedBox(height: 12),
-          
-          // Search bar
-          _buildSearchBar(),
           
           const SizedBox(height: 16),
           
@@ -783,55 +836,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildSearchBar() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-      decoration: BoxDecoration(
-        color: lightMint,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: paleGreen,
-          width: 1,
-        ),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.search,
-            color: darkTeal.withValues(alpha: 0.6),
-            size: 16,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextField(
-              decoration: InputDecoration(
-                hintText: ', companies...',
-                hintStyle: TextStyle(
-                  color: darkTeal.withValues(alpha: 0.5),
-                  fontSize: 9,
-                ),
-                border: InputBorder.none,
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(vertical: 8),
-              ),
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: mediumSeaGreen,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: const Icon(
-              Icons.tune,
-              color: Colors.white,
-              size: 14,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _buildEmptyState() {
     return Center(
@@ -1154,21 +1158,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 ),
               ),
               
-              // Bookmark button
+              // Optimized bookmark button with const constructors
               GestureDetector(
                 onTap: () => _toggleSaveJob(job['id']),
                 child: Container(
                   padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
+                  decoration: const BoxDecoration(
                     color: lightMint,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.all(Radius.circular(8)),
                   ),
-                  child: Icon(
-                    _savedJobs[job['id']] == true 
-                        ? Icons.bookmark 
-                        : Icons.bookmark_border,
-                    color: mediumSeaGreen,
-                    size: 18,
+                  child: _SavedJobIcon(
+                    isSaved: _savedJobs[job['id']] == true,
+                    isPending: _pendingSaveOperations.contains(job['id']),
                   ),
                 ),
               ),
@@ -1207,33 +1208,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           
           const SizedBox(height: 12),
           
-          // Tags
-          Row(
-            children: [
-              Container(
-                margin: const EdgeInsets.only(right: 8),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: mediumSeaGreen.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: mediumSeaGreen.withValues(alpha: 0.2),
-                    width: 1,
-                  ),
-                ),
-                child: Text(
-                  _formatJobTypeDisplay(job['type'] ?? 'full_time'),
-                  style: TextStyle(
-                    color: mediumSeaGreen,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
+          // Tags - Display multiple job types
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _buildMultiTypeChips(job),
           ),
           
           const SizedBox(height: 16),
@@ -1359,14 +1338,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       ),
       child: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
               _buildNavItem(Icons.home_rounded, 'Home', 0),
               _buildNavItem(Icons.work_rounded, 'Jobs', 1),
-              _buildNavItem(Icons.chat_rounded, 'Chat', 2),
-              _buildNavItem(Icons.work_outline, 'Applications', 3),
+              _buildNavItem(Icons.calendar_today_rounded, 'Calendar', 2),
+              _buildNavItem(Icons.chat_rounded, 'Chat', 3),
+              _buildNavItem(Icons.work_outline, 'Apps', 4),
             ],
           ),
         ),
@@ -1388,6 +1368,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             ),
           );
         } else if (index == 2) {
+          // Navigate to calendar screen
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const ApplicantCalendarScreen(),
+            ),
+          );
+        } else if (index == 3) {
           // Navigate to chat list screen
           Navigator.push(
             context,
@@ -1395,7 +1383,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               builder: (context) => const ApplicantChatListScreen(),
             ),
           );
-        } else if (index == 3) {
+        } else if (index == 4) {
           // Navigate to applications screen
           _showApplicationsScreen();
         } else {
@@ -1407,10 +1395,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         }
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         decoration: BoxDecoration(
           color: isSelected ? mediumSeaGreen.withValues(alpha: 0.1) : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(10),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1418,14 +1406,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             Icon(
               icon,
               color: isSelected ? mediumSeaGreen : darkTeal.withValues(alpha: 0.6),
-              size: 24,
+              size: 22,
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 3),
             Text(
               label,
               style: TextStyle(
                 color: isSelected ? mediumSeaGreen : darkTeal.withValues(alpha: 0.6),
-                fontSize: 10,
+                fontSize: 9,
                 fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
               ),
             ),
@@ -1455,6 +1443,121 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return number.toString();
   }
 
+  // Build chips for multiple job types for recommended job cards
+  List<Widget> _buildMultiTypeChips(Map<String, dynamic> job) {
+    final String? jobId = job['id']?.toString();
+    final mapTypes = jobId != null ? _jobTypesByJobId[jobId] : null;
+
+    // Prefer prefetched mapping via job_job_types
+    if (mapTypes != null && mapTypes.isNotEmpty) {
+      String? primaryId;
+      for (final t in mapTypes) {
+        if (t['is_primary'] == true) {
+          primaryId = t['job_type_id']?.toString();
+          break;
+        }
+      }
+      primaryId ??= mapTypes.first['job_type_id']?.toString();
+
+      return mapTypes.map((t) {
+        final id = t['job_type_id']?.toString() ?? '';
+        final isPrimary = id == primaryId;
+        final label = _jobTypeNames[id] ?? 'Unknown';
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: isPrimary ? mediumSeaGreen.withValues(alpha: 0.15) : mediumSeaGreen.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: isPrimary ? mediumSeaGreen.withValues(alpha: 0.3) : mediumSeaGreen.withValues(alpha: 0.15),
+              width: isPrimary ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isPrimary) ...[
+                Icon(Icons.star, color: mediumSeaGreen, size: 10),
+                const SizedBox(width: 4),
+              ],
+              Text(
+                label,
+                style: TextStyle(
+                  color: mediumSeaGreen,
+                  fontSize: 10,
+                  fontWeight: isPrimary ? FontWeight.w700 : FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList();
+    }
+
+    // Fallback: if recommendations include embedded job_types (from optimized RPC)
+    final List<Map<String, dynamic>> jobTypes = (job['job_types'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final Map<String, dynamic>? primary = job['primary_job_type'] as Map<String, dynamic>?;
+    if (jobTypes.isNotEmpty) {
+      return jobTypes.take(3).map((jt) {
+        final isPrimary = primary != null && jt['id'] == primary['id'];
+        final label = jt['display_name'] ?? jt['name'] ?? '';
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: isPrimary ? mediumSeaGreen.withValues(alpha: 0.15) : mediumSeaGreen.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: isPrimary ? mediumSeaGreen.withValues(alpha: 0.3) : mediumSeaGreen.withValues(alpha: 0.15),
+              width: isPrimary ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isPrimary) ...[
+                Icon(Icons.star, color: mediumSeaGreen, size: 10),
+                const SizedBox(width: 4),
+              ],
+              Text(
+                label,
+                style: TextStyle(
+                  color: mediumSeaGreen,
+                  fontSize: 10,
+                  fontWeight: isPrimary ? FontWeight.w700 : FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList();
+    }
+
+    // Final fallback: legacy single type enum
+    final String type = job['type'] ?? 'full_time';
+    return [
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: mediumSeaGreen.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: mediumSeaGreen.withValues(alpha: 0.2),
+            width: 1,
+          ),
+        ),
+        child: Text(
+          _formatJobTypeDisplay(type),
+          style: TextStyle(
+            color: mediumSeaGreen,
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    ];
+  }
+  // removed obsolete _buildJobTypeTags
+
   String _formatJobTypeDisplay(String type) {
     switch (type) {
       case 'full_time':
@@ -1477,46 +1580,115 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
 
-  Future<void> _toggleSaveJob(String jobId) async {
+  void _toggleSaveJob(String jobId) {
+    // Debounce rapid taps
+    if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
+    
+    // Prevent multiple operations on same job
+    if (_pendingSaveOperations.contains(jobId)) return;
+    
+    _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+      _performToggleSaveJob(jobId);
+    });
+  }
+
+  Future<void> _performToggleSaveJob(String jobId) async {
     try {
       final user = Supabase.instance.client.auth.currentUser;
       if (user == null) return;
 
+      // Mark operation as pending
+      _pendingSaveOperations.add(jobId);
+      
+      // Optimistic UI update for immediate feedback
+      final currentState = _savedJobs[jobId] ?? false;
+      final newState = !currentState;
+      
+      if (mounted) {
+        setState(() {
+          _savedJobs[jobId] = newState;
+        });
+      }
+
+      // Perform the actual toggle operation
       final isSaved = await JobService.toggleSaveJob(jobId, user.id);
       
-      // Track recommendation feedback if this is a recommended job
+      // Track recommendation feedback if this is a recommended job (non-blocking)
       if (_recommendedJobs.any((r) => r['id'] == jobId)) {
-        await JobRecommendationService.recordRecommendationFeedback(
+        JobRecommendationService.recordRecommendationFeedback(
           userId: user.id,
           jobId: jobId,
           feedbackType: isSaved ? 'liked' : 'disliked',
-        );
+        ).catchError((e) {
+          debugPrint('Error recording feedback: $e');
+          return false;
+        });
       }
       
+      // Update UI with actual result
       if (mounted) {
         setState(() {
           _savedJobs[jobId] = isSaved;
         });
       }
 
-      // Update saved count in statistics
-      await _loadStatistics();
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(isSaved ? 'Job saved!' : 'Job removed from saved'),
-          backgroundColor: mediumSeaGreen,
-          duration: const Duration(seconds: 2),
-        ),
-      );
+      // Update saved count in statistics (non-blocking)
+      _updateSavedCount();
+
+      // Show success feedback
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(isSaved ? 'Job saved!' : 'Job removed from saved'),
+            backgroundColor: mediumSeaGreen,
+            duration: const Duration(seconds: 1),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Failed to update saved job'),
-          backgroundColor: Colors.red,
-          duration: Duration(seconds: 2),
-        ),
-      );
+      // Revert optimistic update on error
+      final originalState = _savedJobs[jobId] ?? false;
+      if (mounted) {
+        setState(() {
+          _savedJobs[jobId] = originalState;
+        });
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Failed to update saved job'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      // Remove from pending operations
+      _pendingSaveOperations.remove(jobId);
+    }
+  }
+
+  // Optimized statistics update without full reload
+  Future<void> _updateSavedCount() async {
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) return;
+
+      final savedJobsResponse = await Supabase.instance.client
+          .from('saved_jobs')
+          .select('seeker_id, job_id')
+          .eq('seeker_id', user.id);
+      
+      if (mounted) {
+        setState(() {
+          _savedCount = savedJobsResponse.length;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error updating saved count: $e');
     }
   }
 
@@ -1574,6 +1746,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
         ),
@@ -1582,8 +1755,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: mediumSeaGreen.withValues(alpha: 0.2),
+                gradient: LinearGradient(
+                  colors: [
+                    mediumSeaGreen.withValues(alpha: 0.2),
+                    paleGreen.withValues(alpha: 0.15),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
                 borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: mediumSeaGreen.withValues(alpha: 0.3),
+                  width: 1,
+                ),
               ),
               child: const Icon(
                 Icons.check_circle,
@@ -1671,6 +1855,37 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
         ],
       ),
+    );
+  }
+}
+
+// Optimized const widget for save job icon to reduce rebuilds
+class _SavedJobIcon extends StatelessWidget {
+  final bool isSaved;
+  final bool isPending;
+  
+  const _SavedJobIcon({
+    required this.isSaved,
+    required this.isPending,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (isPending) {
+      return const SizedBox(
+        width: 18,
+        height: 18,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4CA771)),
+        ),
+      );
+    }
+    
+    return Icon(
+      isSaved ? Icons.bookmark : Icons.bookmark_border,
+      color: const Color(0xFF4CA771),
+      size: 18,
     );
   }
 }

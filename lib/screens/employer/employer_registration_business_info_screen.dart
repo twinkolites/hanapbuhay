@@ -360,6 +360,14 @@ class _EmployerRegistrationBusinessInfoScreenState extends State<EmployerRegistr
                     label: 'Business License Number',
                     hint: 'Enter business license number',
                     icon: Icons.business,
+                    validator: (value) {
+                      if (value != null && value.trim().isNotEmpty) {
+                        // Validate as secure organization name (similar to company name)
+                        final error = InputSecurityService.validateSecureOrganization(value.trim());
+                        return error;
+                      }
+                      return null;
+                    },
                     onChanged: _updateRegistrationData,
                   ),
 
@@ -371,6 +379,14 @@ class _EmployerRegistrationBusinessInfoScreenState extends State<EmployerRegistr
                     label: 'Tax ID Number',
                     hint: 'Enter tax identification number',
                     icon: Icons.receipt,
+                    validator: (value) {
+                      if (value != null && value.trim().isNotEmpty) {
+                        // Validate as secure organization name (similar to company name)
+                        final error = InputSecurityService.validateSecureOrganization(value.trim());
+                        return error;
+                      }
+                      return null;
+                    },
                     onChanged: _updateRegistrationData,
                   ),
 
@@ -382,6 +398,14 @@ class _EmployerRegistrationBusinessInfoScreenState extends State<EmployerRegistr
                     label: 'Business Registration Number',
                     hint: 'Enter business registration number',
                     icon: Icons.assignment,
+                    validator: (value) {
+                      if (value != null && value.trim().isNotEmpty) {
+                        // Validate as secure organization name (similar to company name)
+                        final error = InputSecurityService.validateSecureOrganization(value.trim());
+                        return error;
+                      }
+                      return null;
+                    },
                     onChanged: _updateRegistrationData,
                   ),
                 ],
@@ -522,11 +546,11 @@ class _EmployerRegistrationBusinessInfoScreenState extends State<EmployerRegistr
         ),
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
-          value: value.isEmpty ? null : value,
+          initialValue: value.isEmpty ? null : value,
           items: items.map((item) {
             return DropdownMenuItem<String>(
               value: item,
-              child: Container(
+              child: SizedBox(
                 width: double.infinity,
                 child: Text(
                   item,

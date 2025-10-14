@@ -3,6 +3,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/auth_service.dart';
 import '../services/new_user_detection_service.dart';
 import '../services/stay_signed_in_service.dart';
+import '../services/job_preferences_service.dart';
+import '../services/onesignal_notification_service.dart';
 import '../main.dart';
 
 class AuthProvider extends ChangeNotifier {
@@ -47,9 +49,13 @@ class AuthProvider extends ChangeNotifier {
         _user = data.session?.user;
         if (_user != null) {
           await _checkUserStatus();
+          // Subscribe to OneSignal notifications when user logs in
+          await OneSignalNotificationService.subscribeUser(_user!.id);
         } else {
           _isNewUser = false;
           _hasCompletedOnboarding = false;
+          // Unsubscribe from notifications when user logs out
+          await OneSignalNotificationService.unsubscribeUser(_user?.id ?? '');
         }
         notifyListeners();
       });
@@ -62,20 +68,60 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  // Check user status (new user, onboarding completion)
+  // Check if user is suspended
+  bool _isSuspended = false;
+  String? _suspensionReason;
+  
+  bool get isSuspended => _isSuspended;
+  String? get suspensionReason => _suspensionReason;
+
+  // Check user status (new user, onboarding completion, suspension)
   Future<void> _checkUserStatus() async {
     if (_user == null) return;
     
     try {
-      final status = await NewUserDetectionService.getOnboardingStatus(_user!.id);
-      _isNewUser = status['isNewUser'] ?? false;
-      _hasCompletedOnboarding = status['hasCompletedOnboarding'] ?? false;
+      // Check suspension status
+      await _checkSuspensionStatus();
       
-      debugPrint('🔍 User status for ${_user!.id}: isNew=$_isNewUser, completed=$_hasCompletedOnboarding');
+      // Only check onboarding if not suspended
+      if (!_isSuspended) {
+        final status = await NewUserDetectionService.getOnboardingStatus(_user!.id);
+        _isNewUser = status['isNewUser'] ?? false;
+        _hasCompletedOnboarding = status['hasCompletedOnboarding'] ?? false;
+        
+        debugPrint('🔍 User status for ${_user!.id}: isNew=$_isNewUser, completed=$_hasCompletedOnboarding');
+      }
     } catch (e) {
       debugPrint('❌ Error checking user status: $e');
       _isNewUser = false;
       _hasCompletedOnboarding = false;
+    }
+  }
+
+  // Check if user account is suspended
+  Future<void> _checkSuspensionStatus() async {
+    if (_user == null) return;
+    
+    try {
+      final response = await supabase
+          .from('profiles')
+          .select('is_suspended, suspension_reason')
+          .eq('id', _user!.id)
+          .maybeSingle();
+      
+      if (response != null) {
+        final wasSuspended = _isSuspended;
+        _isSuspended = response['is_suspended'] == true;
+        _suspensionReason = response['suspension_reason'] as String?;
+        
+        if (_isSuspended && !wasSuspended) {
+          // User just got suspended
+          debugPrint('⚠️ User ${_user!.id} is suspended: $_suspensionReason');
+          notifyListeners(); // Notify listeners to show suspension screen
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ Error checking suspension status: $e');
     }
   }
 
@@ -99,6 +145,28 @@ class AuthProvider extends ChangeNotifier {
       notifyListeners();
 
       await AuthService.signInWithEmail(email: email, password: password);
+      
+      // Check suspension status immediately after login
+      final user = supabase.auth.currentUser;
+      if (user != null) {
+        final profileResponse = await supabase
+            .from('profiles')
+            .select('is_suspended, suspension_reason')
+            .eq('id', user.id)
+            .maybeSingle();
+        
+        if (profileResponse != null && profileResponse['is_suspended'] == true) {
+          _isSuspended = true;
+          _suspensionReason = profileResponse['suspension_reason'] as String?;
+          
+          // Sign out the suspended user
+          await supabase.auth.signOut();
+          _user = null;
+          
+          _error = 'Account suspended';
+          return false;
+        }
+      }
       
       // Mark session as valid after successful login (respects user preference)
       await StaySignedInService.markSessionAsValid();
@@ -184,6 +252,12 @@ class AuthProvider extends ChangeNotifier {
       
       // Clear all session data and preferences
       await StaySignedInService.clearSessionData();
+      await JobPreferencesService.clearPreferencesData();
+      
+      // Unsubscribe from OneSignal notifications
+      if (_user != null) {
+        await OneSignalNotificationService.unsubscribeUser(_user!.id);
+      }
       
       _user = null;
       

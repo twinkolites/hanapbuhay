@@ -976,14 +976,6 @@ class _ProfileScreenState extends State<ProfileScreen> with TickerProviderStateM
             _loadStatistics();
           },
         ),
-        _buildMenuItem(
-          icon: Icons.notifications_outlined,
-          title: 'Notifications',
-          subtitle: 'Manage your notification preferences',
-          onTap: () {
-            // TODO: Navigate to notifications
-          },
-        ),
         const SizedBox(height: 24),
         
         const Text(
@@ -995,22 +987,6 @@ class _ProfileScreenState extends State<ProfileScreen> with TickerProviderStateM
           ),
         ),
         const SizedBox(height: 16),
-        _buildMenuItem(
-          icon: Icons.security_outlined,
-          title: 'Privacy & Security',
-          subtitle: 'Manage your account security',
-          onTap: () {
-            // TODO: Navigate to privacy settings
-          },
-        ),
-        _buildMenuItem(
-          icon: Icons.language_outlined,
-          title: 'Language',
-          subtitle: 'Change app language',
-          onTap: () {
-            // TODO: Navigate to language settings
-          },
-        ),
         _buildMenuItem(
           icon: Icons.help_outline,
           title: 'Help & Support',

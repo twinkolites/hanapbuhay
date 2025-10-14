@@ -19,7 +19,10 @@ class _ApplicantApplicationsScreenState extends State<ApplicantApplicationsScree
   List<Map<String, dynamic>> _applications = [];
   bool _isLoading = true;
   String _selectedStatus = 'all';
-  Map<String, bool> _applicationChatStatus = {}; // Track chat status for each application
+  final Map<String, bool> _applicationChatStatus = {}; // Track chat status for each application
+  // Multiple job types support
+  Map<String, List<Map<String, dynamic>>> _jobTypesByJobId = {}; // jobId -> [{job_type_id,is_primary}]
+  Map<String, String> _jobTypeNames = {}; // job_type_id -> display_name
   
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
@@ -66,6 +69,7 @@ class _ApplicantApplicationsScreenState extends State<ApplicantApplicationsScree
     _animationController.forward();
     
     _loadApplications();
+    _loadJobTypeCatalog();
   }
 
   @override
@@ -82,6 +86,8 @@ class _ApplicantApplicationsScreenState extends State<ApplicantApplicationsScree
         
         // Check chat status for each application
         await _checkChatStatusForApplications(applications, user.id);
+        // Prefetch job types for jobs in the result
+        await _prefetchJobTypes(applications);
         
         setState(() {
           _applications = applications;
@@ -93,6 +99,44 @@ class _ApplicantApplicationsScreenState extends State<ApplicantApplicationsScree
         _isLoading = false;
       });
     }
+  }
+
+  Future<void> _loadJobTypeCatalog() async {
+    try {
+      final types = await JobService.getJobTypes();
+      final Map<String, String> names = {};
+      for (final t in types) {
+        final id = t['id']?.toString();
+        if (id != null) {
+          names[id] = (t['display_name'] ?? t['name'] ?? 'Unknown').toString();
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _jobTypeNames = names;
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _prefetchJobTypes(List<Map<String, dynamic>> applications) async {
+    try {
+      final Set<String> jobIds = {};
+      for (final a in applications) {
+        final jobId = a['jobs']?['id']?.toString();
+        if (jobId != null) jobIds.add(jobId);
+      }
+      final Map<String, List<Map<String, dynamic>>> temp = {};
+      for (final jobId in jobIds) {
+        final types = await JobService.getJobTypesForJob(jobId);
+        temp[jobId] = types;
+      }
+      if (mounted) {
+        setState(() {
+          _jobTypesByJobId = temp;
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _checkChatStatusForApplications(List<Map<String, dynamic>> applications, String userId) async {
@@ -837,7 +881,7 @@ class _ApplicantApplicationsScreenState extends State<ApplicantApplicationsScree
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      Formatters.formatJobTypeDisplay(job['type'] ?? 'full_time'),
+                      _formatJobTypesDisplay(job),
                       style: TextStyle(
                         color: darkTeal.withValues(alpha: 0.8),
                         fontSize: 11,
@@ -847,6 +891,11 @@ class _ApplicantApplicationsScreenState extends State<ApplicantApplicationsScree
                   ],
                 ),
                 const SizedBox(height: 8),
+                // Full job types chips (if available)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: _buildJobTypeChips(job),
+                ),
                 Row(
                   children: [
                     Icon(
@@ -923,6 +972,7 @@ class _ApplicantApplicationsScreenState extends State<ApplicantApplicationsScree
                 ),
               ),
               const SizedBox(width: 8),
+              // Removed Job Details button per request
               Expanded(
                 child: ElevatedButton.icon(
                   onPressed: () {
@@ -988,13 +1038,13 @@ class _ApplicantApplicationsScreenState extends State<ApplicantApplicationsScree
           application: application,
           job: job,
           company: company,
-          onWithdraw: (reason) => _processWithdrawal(application, reason),
+          onWithdraw: (reason, category) => _processWithdrawal(application, reason, category),
         );
       },
     );
   }
 
-  Future<void> _processWithdrawal(Map<String, dynamic> application, String? reason) async {
+  Future<void> _processWithdrawal(Map<String, dynamic> application, String? reason, String? category) async {
     try {
       // Show loading indicator
       showDialog(
@@ -1005,63 +1055,126 @@ class _ApplicantApplicationsScreenState extends State<ApplicantApplicationsScree
         ),
       );
 
-      final success = await JobService.withdrawApplication(
+      final result = await JobService.withdrawApplication(
         applicationId: application['id'],
         withdrawalReason: reason,
+        withdrawalCategory: category,
       );
 
       // Close loading dialog
-      Navigator.of(context).pop();
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
 
-      if (success) {
+      if (result['success'] == true) {
         // Show success message
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Application withdrawn successfully'),
-            backgroundColor: mediumSeaGreen,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.white, size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      result['message'] ?? 'Application withdrawn successfully',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: mediumSeaGreen,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              duration: const Duration(seconds: 3),
             ),
-            action: SnackBarAction(
-              label: 'OK',
-              textColor: Colors.white,
-              onPressed: () {
-                ScaffoldMessenger.of(context).hideCurrentSnackBar();
-              },
-            ),
-          ),
-        );
+          );
+        }
 
         // Refresh applications list
         await _loadApplications();
       } else {
-        // Show error message
+        // Show specific error message based on error code
+        final errorCode = result['code'] as String?;
+        final errorMessage = _getWithdrawalErrorMessage(errorCode, result['error']);
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.error_outline, color: Colors.white, size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      errorMessage,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ Error during withdrawal process: $e');
+      
+      // Close loading dialog if still open
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+      
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Failed to withdraw application. Please try again.'),
+            content: Row(
+              children: [
+                const Icon(Icons.error_outline, color: Colors.white, size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'An unexpected error occurred. Please try again later.',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),
+            duration: const Duration(seconds: 4),
           ),
         );
       }
-    } catch (e) {
-      // Close loading dialog if still open
-      Navigator.of(context).pop();
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: ${e.toString()}'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-      );
+    }
+  }
+
+  String _getWithdrawalErrorMessage(String? errorCode, dynamic error) {
+    switch (errorCode) {
+      case 'AUTH_ERROR':
+        return 'Please log in to withdraw your application';
+      case 'NOT_FOUND':
+        return 'Application not found. It may have been already removed.';
+      case 'UNAUTHORIZED':
+        return 'You are not authorized to withdraw this application';
+      case 'ALREADY_WITHDRAWN':
+        return 'This application has already been withdrawn';
+      case 'CANNOT_WITHDRAW_HIRED':
+        return 'Cannot withdraw an accepted job offer';
+      case 'SYSTEM_ERROR':
+      default:
+        return error?.toString() ?? 'Failed to withdraw application. Please try again.';
     }
   }
 
@@ -1266,7 +1379,27 @@ class _ApplicantApplicationsScreenState extends State<ApplicantApplicationsScree
                     ),
                     const SizedBox(height: 12),
                     _buildInfoRow('Location', job['location'] ?? 'Not specified'),
-                    _buildInfoRow('Type', Formatters.formatJobTypeDisplay(job['type'] ?? 'full_time')),
+                    // Replace single-line Type with chips list
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(
+                            width: 100,
+                            child: Text(
+                              'Type',
+                              style: TextStyle(
+                                color: darkTeal.withValues(alpha: 0.7),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                          Expanded(child: _buildJobTypeChips(job)),
+                        ],
+                      ),
+                    ),
                     _buildInfoRow('Experience', job['experience_level'] ?? 'Not specified'),
                     if (job['salary_min'] != null || job['salary_max'] != null)
                       _buildInfoRow('Salary', Formatters.formatSalaryRange(job['salary_min'], job['salary_max'])),
@@ -1611,11 +1744,105 @@ class _ApplicantApplicationsScreenState extends State<ApplicantApplicationsScree
 
 }
 
+// Helpers for multiple job types formatting
+extension on _ApplicantApplicationsScreenState {
+  String _formatJobTypesDisplay(Map<String, dynamic> job) {
+    final jobId = job['id']?.toString();
+    final types = jobId != null ? _jobTypesByJobId[jobId] : null;
+    if (types != null && types.isNotEmpty) {
+      String? primaryId;
+      for (final t in types) {
+        if (t['is_primary'] == true) {
+          primaryId = t['job_type_id']?.toString();
+          break;
+        }
+      }
+      primaryId ??= types.first['job_type_id']?.toString();
+      final primaryName = _jobTypeNames[primaryId ?? ''] ?? 'Unknown';
+      if (types.length == 1) return primaryName;
+      return '$primaryName +${types.length - 1}';
+    }
+
+    // Fallback to legacy single type enum
+    return Formatters.formatJobTypeDisplay(job['type'] ?? 'full_time');
+  }
+
+  Widget _buildJobTypeChips(Map<String, dynamic> job) {
+    final jobId = job['id']?.toString();
+    final types = jobId != null ? _jobTypesByJobId[jobId] : null;
+    if (types == null || types.isEmpty) {
+      // Fallback to single type chip if legacy type exists
+      final legacy = Formatters.formatJobTypeDisplay(job['type'] ?? 'full_time');
+      return Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: _ApplicantApplicationsScreenState.mediumSeaGreen.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _ApplicantApplicationsScreenState.mediumSeaGreen.withValues(alpha: 0.3), width: 1),
+            ),
+            child: Text(
+              legacy,
+              style: const TextStyle(
+                color: _ApplicantApplicationsScreenState.mediumSeaGreen,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Render chips for all job types; star the primary
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: types.map((t) {
+        final id = t['job_type_id']?.toString() ?? '';
+        final isPrimary = t['is_primary'] == true;
+        final name = _jobTypeNames[id] ?? 'Unknown';
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: isPrimary ? _ApplicantApplicationsScreenState.mediumSeaGreen : _ApplicantApplicationsScreenState.mediumSeaGreen.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: isPrimary ? _ApplicantApplicationsScreenState.mediumSeaGreen : _ApplicantApplicationsScreenState.mediumSeaGreen.withValues(alpha: 0.3),
+              width: 1,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                name,
+                style: TextStyle(
+                  color: isPrimary ? Colors.white : _ApplicantApplicationsScreenState.mediumSeaGreen,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (isPrimary) ...[
+                const SizedBox(width: 4),
+                const Icon(Icons.star, size: 12, color: Colors.white),
+              ],
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
 class _WithdrawApplicationDialog extends StatefulWidget {
   final Map<String, dynamic> application;
   final Map<String, dynamic> job;
   final Map<String, dynamic> company;
-  final Function(String?) onWithdraw;
+  final Function(String?, String?) onWithdraw;
 
   const _WithdrawApplicationDialog({
     required this.application,
@@ -1879,8 +2106,9 @@ class _WithdrawApplicationDialogState extends State<_WithdrawApplicationDialog> 
             
             final reason = _selectedReason ?? 
                           (_reasonController.text.trim().isNotEmpty ? _reasonController.text.trim() : null);
+            final category = _selectedReason; // Use selected reason as category
             
-            widget.onWithdraw(reason);
+            widget.onWithdraw(reason, category);
             Navigator.of(context).pop();
           },
           style: ElevatedButton.styleFrom(

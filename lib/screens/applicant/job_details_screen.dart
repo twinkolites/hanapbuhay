@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../services/job_service.dart';
 import 'apply_job_screen.dart';
+import '../employer/employer_availability_screen.dart';
+import '../../services/calendar_service.dart';
 
 final supabase = Supabase.instance.client;
 
@@ -20,6 +22,11 @@ class JobDetailsScreen extends StatefulWidget {
 class _JobDetailsScreenState extends State<JobDetailsScreen> with TickerProviderStateMixin {
   bool _hasApplied = false;
   bool _isSaved = false;
+  String? _employerId;
+  String? _availabilitySummary;
+  // Multiple job types support
+  Map<String, String> _jobTypeNames = {}; // job_type_id -> display_name
+  List<Map<String, dynamic>> _jobTypeMappings = []; // [{job_type_id,is_primary}]
   
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
@@ -52,12 +59,46 @@ class _JobDetailsScreenState extends State<JobDetailsScreen> with TickerProvider
     
     _animationController.forward();
     _checkJobStatus();
+    _prepareAvailability();
+    _loadJobTypeCatalog();
+    _prefetchJobTypes();
   }
 
   @override
   void dispose() {
     _animationController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadJobTypeCatalog() async {
+    try {
+      final types = await JobService.getJobTypes();
+      final Map<String, String> names = {};
+      for (final t in types) {
+        final id = t['id']?.toString();
+        if (id != null) {
+          names[id] = (t['display_name'] ?? t['name'] ?? 'Unknown').toString();
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _jobTypeNames = names;
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _prefetchJobTypes() async {
+    try {
+      final jobId = widget.job['id']?.toString();
+      if (jobId == null) return;
+      final types = await JobService.getJobTypesForJob(jobId);
+      if (mounted) {
+        setState(() {
+          _jobTypeMappings = types;
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _checkJobStatus() async {
@@ -75,6 +116,52 @@ class _JobDetailsScreenState extends State<JobDetailsScreen> with TickerProvider
     } catch (e) {
       // Handle error silently
     }
+  }
+
+  Future<void> _prepareAvailability() async {
+    try {
+      // Determine employerId from job companies relation
+      String? employerId;
+      final company = widget.job['companies'];
+      if (company != null && company['id'] != null) {
+        // Fetch owner_id from companies table
+        final row = await supabase
+            .from('companies')
+            .select('owner_id')
+            .eq('id', company['id'])
+            .maybeSingle();
+        employerId = row?['owner_id'] as String?;
+      }
+
+      if (employerId == null) return;
+      _employerId = employerId;
+
+      final settings = await CalendarService.getAvailabilitySettings(employerId);
+      if (settings == null) {
+        if (mounted) setState(() => _availabilitySummary = 'No availability set');
+        return;
+      }
+
+      // Build weekly summary (Mon–Sun with first available window or Unavailable)
+      final dayNames = const ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+      final List<String> parts = [];
+      for (int i = 0; i < 7; i++) {
+        final daySlots = settings.weeklyAvailability
+            .where((s) => s.dayOfWeek == i && s.isAvailable)
+            .toList();
+        if (daySlots.isEmpty) {
+          parts.add('${dayNames[i]}: —');
+        } else {
+          // Show first slot and a +N if more
+          final first = daySlots.first;
+          final firstStr = '${_two(first.startTime.hour)}:${_two(first.startTime.minute)}–${_two(first.endTime.hour)}:${_two(first.endTime.minute)}';
+          final extra = daySlots.length > 1 ? ' (+${daySlots.length - 1})' : '';
+          parts.add('${dayNames[i]}: $firstStr$extra');
+        }
+      }
+
+      if (mounted) setState(() => _availabilitySummary = parts.join('  |  '));
+    } catch (_) {}
   }
 
   Future<void> _toggleSaveJob() async {
@@ -250,6 +337,9 @@ class _JobDetailsScreenState extends State<JobDetailsScreen> with TickerProvider
               const SizedBox(height: 24),
               
               _buildCompanyInfo(),
+
+              const SizedBox(height: 24),
+              _buildAvailabilityPreview(),
               
               const SizedBox(height: 100),
             ],
@@ -258,6 +348,60 @@ class _JobDetailsScreenState extends State<JobDetailsScreen> with TickerProvider
       ),
     );
   }
+
+  Widget _buildAvailabilityPreview() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: lightMint,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: paleGreen.withValues(alpha: 0.3), width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: mediumSeaGreen.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.schedule_rounded, color: mediumSeaGreen, size: 18),
+              ),
+              const SizedBox(width: 12),
+              const Text('Employer Availability', style: TextStyle(color: darkTeal, fontSize: 14, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            _availabilitySummary ?? 'Loading availability...',
+            style: TextStyle(color: darkTeal.withValues(alpha: 0.8), fontSize: 11, height: 1.4),
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: _employerId == null
+                  ? null
+                  : () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => EmployerAvailabilityScreen(employerId: _employerId!),
+                        ),
+                      );
+                    },
+              child: const Text('View Slots', style: TextStyle(color: mediumSeaGreen, fontWeight: FontWeight.w600)),
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  String _two(int v) => v.toString().padLeft(2, '0');
 
   Widget _buildJobHeader() {
     final company = widget.job['companies'];
@@ -340,21 +484,11 @@ class _JobDetailsScreenState extends State<JobDetailsScreen> with TickerProvider
           ),
           
           const SizedBox(height: 16),
-          
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: mediumSeaGreen.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(
-              _formatJobTypeDisplay(widget.job['type'] ?? 'full_time'),
-              style: TextStyle(
-                color: mediumSeaGreen,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+          // Job type chips (multiple types supported)
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _buildJobTypeChips(widget.job),
           ),
         ],
       ),
@@ -382,6 +516,35 @@ class _JobDetailsScreenState extends State<JobDetailsScreen> with TickerProvider
           
           const SizedBox(height: 16),
           
+          // Job Types row (chips)
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: mediumSeaGreen.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(
+                  Icons.work_outline,
+                  color: mediumSeaGreen,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _buildJobTypeChips(widget.job),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 16),
+
           if (widget.job['salary_min'] != null || widget.job['salary_max'] != null)
             _buildInfoRow(
               Icons.payments_outlined,
@@ -724,5 +887,116 @@ class _JobDetailsScreenState extends State<JobDetailsScreen> with TickerProvider
           word[0].toUpperCase() + word.substring(1)
         ).join(' ');
     }
+  }
+
+  // Build chips for multiple job types with primary highlighted
+  List<Widget> _buildJobTypeChips(Map<String, dynamic> job) {
+    // Prefer mapped job_job_types if available
+    if (_jobTypeMappings.isNotEmpty) {
+      String? primaryId;
+      for (final t in _jobTypeMappings) {
+        if (t['is_primary'] == true) {
+          primaryId = t['job_type_id']?.toString();
+          break;
+        }
+      }
+      primaryId ??= _jobTypeMappings.first['job_type_id']?.toString();
+      return _jobTypeMappings.map((t) {
+        final id = t['job_type_id']?.toString() ?? '';
+        final isPrimary = id == primaryId;
+        final label = _jobTypeNames[id] ?? 'Unknown';
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: isPrimary ? mediumSeaGreen.withValues(alpha: 0.15) : mediumSeaGreen.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: isPrimary ? mediumSeaGreen.withValues(alpha: 0.3) : mediumSeaGreen.withValues(alpha: 0.15),
+              width: isPrimary ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isPrimary) ...[
+                Icon(Icons.star, color: mediumSeaGreen, size: 10),
+                const SizedBox(width: 4),
+              ],
+              Text(
+                label,
+                style: TextStyle(
+                  color: mediumSeaGreen,
+                  fontSize: 11,
+                  fontWeight: isPrimary ? FontWeight.w700 : FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList();
+    }
+
+    // Fallback to embedded job['job_types'] if present
+    final List<Map<String, dynamic>> jobTypes =
+        (job['job_types'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final Map<String, dynamic>? primary = job['primary_job_type'] as Map<String, dynamic>?;
+    if (jobTypes.isNotEmpty) {
+      return jobTypes.map((jt) {
+        final isPrimary = primary != null && jt['id'] == primary['id'];
+        final label = jt['display_name'] ?? jt['name'] ?? '';
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: isPrimary ? mediumSeaGreen.withValues(alpha: 0.15) : mediumSeaGreen.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: isPrimary ? mediumSeaGreen.withValues(alpha: 0.3) : mediumSeaGreen.withValues(alpha: 0.15),
+              width: isPrimary ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isPrimary) ...[
+                Icon(Icons.star, color: mediumSeaGreen, size: 10),
+                const SizedBox(width: 4),
+              ],
+              Text(
+                label,
+                style: TextStyle(
+                  color: mediumSeaGreen,
+                  fontSize: 11,
+                  fontWeight: isPrimary ? FontWeight.w700 : FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList();
+    }
+
+    // Legacy fallback
+    final legacy = _formatJobTypeDisplay(job['type'] ?? 'full_time');
+    return [
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: mediumSeaGreen.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: mediumSeaGreen.withValues(alpha: 0.2),
+            width: 1,
+          ),
+        ),
+        child: Text(
+          legacy,
+          style: TextStyle(
+            color: mediumSeaGreen,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    ];
   }
 }

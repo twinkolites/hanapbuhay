@@ -418,13 +418,13 @@ class _AvailabilitySettingsScreenState extends State<AvailabilitySettingsScreen>
               Switch(
                 value: isAvailable,
                 onChanged: (value) => _toggleDayAvailability(dayIndex, value),
-                activeColor: mediumSeaGreen,
+                activeThumbColor: mediumSeaGreen,
               ),
             ],
           ),
           if (isAvailable) ...[
             const SizedBox(height: 12),
-            ...slots.map((slot) => _buildTimeSlot(dayIndex, slot)).toList(),
+            ...slots.map((slot) => _buildTimeSlot(dayIndex, slot)),
             const SizedBox(height: 8),
             _buildAddTimeSlotButton(dayIndex),
           ],

@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/calendar_models.dart';
+import 'onesignal_notification_service.dart';
 
 class CalendarService {
   static final SupabaseClient _supabase = Supabase.instance.client;
@@ -41,7 +42,38 @@ class CalendarService {
     try {
       final response = await _supabase.from('calendar_events').insert(event.toJson()).select().single();
       
-      return CalendarEvent.fromJson(response as Map<String, dynamic>);
+      final createdEvent = CalendarEvent.fromJson(response);
+      
+      // Send notifications for meeting scheduling
+      if (event.applicantId != null && event.type == CalendarEventType.interview) {
+        try {
+          // Get job details for notification
+          final jobDetails = await _supabase
+              .from('jobs')
+              .select('title')
+              .eq('id', event.jobId ?? '')
+              .single();
+
+          await OneSignalNotificationService.sendMeetingScheduledNotification(
+            applicantId: event.applicantId!,
+            employerId: event.employerId ?? '',
+            jobId: event.jobId ?? '',
+            jobTitle: jobDetails['title'] ?? 'Unknown Job',
+            meetingTitle: event.title,
+            startTime: event.startTime,
+            endTime: event.endTime,
+            meetingLink: event.meetingLink ?? '',
+            eventId: createdEvent.id,
+          );
+
+          print('✅ Meeting scheduled notifications sent successfully');
+        } catch (notificationError) {
+          print('❌ Error sending meeting notifications: $notificationError');
+          // Don't fail event creation if notifications fail
+        }
+      }
+      
+      return createdEvent;
     } catch (e) {
       print('Error creating event: $e');
       return null;
@@ -59,7 +91,7 @@ class CalendarService {
           .select()
           .single();
       
-      return CalendarEvent.fromJson(response as Map<String, dynamic>);
+      return CalendarEvent.fromJson(response);
     } catch (e) {
       print('Error updating event: $e');
       return null;
@@ -108,11 +140,11 @@ class CalendarService {
       
       final response = await _supabase
           .from('availability_settings')
-          .upsert(updatedSettings.toJson())
+          .upsert(updatedSettings.toJson(), onConflict: 'user_id')
           .select()
           .single();
       
-      return AvailabilitySettings.fromJson(response as Map<String, dynamic>);
+      return AvailabilitySettings.fromJson(response);
     } catch (e) {
       print('Error updating availability settings: $e');
       return null;
@@ -128,7 +160,41 @@ class CalendarService {
           .select()
           .single();
       
-      return MeetingRequest.fromJson(response as Map<String, dynamic>);
+      final createdRequest = MeetingRequest.fromJson(response);
+      
+      // Send notifications for meeting request
+      try {
+        // Get applicant and job details for notification
+        final applicantProfile = await _supabase
+            .from('profiles')
+            .select('full_name')
+            .eq('id', request.applicantId)
+            .single();
+
+        final jobDetails = await _supabase
+            .from('jobs')
+            .select('title')
+            .eq('id', request.jobId)
+            .single();
+
+        await OneSignalNotificationService.sendMeetingRequestNotification(
+          applicantId: request.applicantId,
+          employerId: request.employerId,
+          jobId: request.jobId,
+          jobTitle: jobDetails['title'] ?? 'Unknown Job',
+          applicantName: applicantProfile['full_name'] ?? 'Unknown',
+          requestedTime: request.requestedStartTime,
+          message: request.message ?? '',
+          requestId: createdRequest.id,
+        );
+
+        print('✅ Meeting request notifications sent successfully');
+      } catch (notificationError) {
+        print('❌ Error sending meeting request notifications: $notificationError');
+        // Don't fail request creation if notifications fail
+      }
+      
+      return createdRequest;
     } catch (e) {
       print('Error creating meeting request: $e');
       return null;
@@ -178,7 +244,7 @@ class CalendarService {
           .select()
           .single();
       
-      return MeetingRequest.fromJson(response as Map<String, dynamic>);
+      return MeetingRequest.fromJson(response);
     } catch (e) {
       print('Error responding to meeting request: $e');
       return null;

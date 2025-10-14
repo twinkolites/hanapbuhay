@@ -24,7 +24,11 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
   final _salaryMaxController = TextEditingController();
   final _experienceLevelController = TextEditingController();
 
-  String _selectedJobType = 'full_time';
+  // Multi job types selection (align with PostJobScreen)
+  final List<String> _selectedJobTypeIds = [];
+  String? _primaryJobTypeId;
+  List<Map<String, dynamic>> _availableJobTypes = [];
+  bool _isLoadingJobTypes = true;
   bool _isLoading = false;
   bool _hasChanges = false;
 
@@ -37,14 +41,7 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
   static const Color mediumSeaGreen = Color(0xFF4CA771);
   static const Color darkTeal = Color(0xFF013237);
 
-  final List<String> _jobTypes = [
-    'full_time',
-    'part_time',
-    'contract',
-    'temporary',
-    'internship',
-    'remote',
-  ];
+  // Removed old single-select job types list
 
   @override
   void initState() {
@@ -69,13 +66,14 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
     );
 
     _animationController.forward();
+
+    _loadJobTypes();
   }
 
   void _initializeFormData() {
     _titleController.text = widget.job['title'] ?? '';
     _descriptionController.text = widget.job['description'] ?? '';
     _locationController.text = widget.job['location'] ?? '';
-    _selectedJobType = widget.job['type'] ?? 'full_time';
     
     if (widget.job['salary_min'] != null) {
       _salaryMinController.text = widget.job['salary_min'].toString();
@@ -85,6 +83,33 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
     }
     
     _experienceLevelController.text = widget.job['experience_level'] ?? '';
+  }
+
+  Future<void> _loadJobTypes() async {
+    try {
+      final jobTypes = await JobService.getJobTypes();
+      final selected = await JobService.getJobTypesForJob(widget.job['id']);
+
+      if (mounted) {
+        setState(() {
+          _availableJobTypes = jobTypes;
+          _selectedJobTypeIds
+            ..clear()
+            ..addAll(selected.map((e) => e['job_type_id'] as String));
+          _primaryJobTypeId = selected.firstWhere(
+            (e) => e['is_primary'] == true,
+            orElse: () => {'job_type_id': (_selectedJobTypeIds.isNotEmpty ? _selectedJobTypeIds.first : null)},
+          )['job_type_id'] as String?;
+          _isLoadingJobTypes = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingJobTypes = false;
+        });
+      }
+    }
   }
 
   void _setupChangeListeners() {
@@ -121,6 +146,12 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
       return;
     }
 
+    // Validate job types selection
+    if (_selectedJobTypeIds.isEmpty) {
+      _showErrorDialog('Please select at least one job type.');
+      return;
+    }
+
     if (!_hasChanges) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -153,7 +184,7 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
         title: sanitizedTitle,
         description: sanitizedDescription,
         location: sanitizedLocation,
-        type: _selectedJobType,
+        // Do not send legacy single type; types managed in relation table
         salaryMin: _salaryMinController.text.isNotEmpty
             ? int.tryParse(_salaryMinController.text.replaceAll(',', ''))
             : null,
@@ -163,7 +194,16 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
         experienceLevel: sanitizedExperienceLevel,
       );
 
-      if (success && mounted) {
+      // Persist job types mapping
+      final typesOk = success
+          ? await JobService.setJobTypesForJob(
+              jobId: widget.job['id'],
+              jobTypeIds: _selectedJobTypeIds,
+              primaryJobTypeId: _primaryJobTypeId,
+            )
+          : false;
+
+      if (success && typesOk && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text('Job updated successfully!'),
@@ -345,7 +385,7 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
             
             const SizedBox(height: 20),
             
-            _buildJobTypeDropdown(),
+            _buildJobTypeMultiSelect(),
             
             const SizedBox(height: 20),
             
@@ -598,12 +638,12 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
     );
   }
 
-  Widget _buildJobTypeDropdown() {
+  Widget _buildJobTypeMultiSelect() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Job Type',
+          'Job Type *',
           style: TextStyle(
             color: darkTeal,
             fontSize: 14,
@@ -611,72 +651,255 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
           ),
         ),
         const SizedBox(height: 8),
-        DropdownButtonFormField<String>(
-          value: _selectedJobType,
-          onChanged: (value) {
-            setState(() {
-              _selectedJobType = value!;
-              _hasChanges = true;
-            });
-          },
-          decoration: InputDecoration(
-            prefixIcon: Container(
-              height: 20,
-              margin: const EdgeInsets.all(12),
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: mediumSeaGreen.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(
-                Icons.access_time,
-                color: mediumSeaGreen,
-                size: 16,
-              ),
-            ),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 16,
-            ),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: paleGreen.withValues(alpha: 0.5),
+        if (_isLoadingJobTypes)
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: paleGreen.withValues(alpha: 0.3),
                 width: 1,
               ),
             ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: paleGreen.withValues(alpha: 0.5),
-                width: 1,
-              ),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(
-                color: mediumSeaGreen,
-                width: 2,
-              ),
-            ),
-            filled: true,
-            fillColor: lightMint.withValues(alpha: 0.3),
-          ),
-          items: _jobTypes.map((type) {
-            return DropdownMenuItem(
-              value: type,
-              child: Text(
-                _formatJobTypeDisplay(type),
-                style: const TextStyle(
-                  color: darkTeal,
-                  fontSize: 14,
+            child: const Center(
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(mediumSeaGreen),
                 ),
               ),
-            );
-          }).toList(),
-        ),
+            ),
+          )
+        else
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: paleGreen.withValues(alpha: 0.3),
+                width: 1,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_selectedJobTypeIds.isNotEmpty) ...[
+                  Text(
+                    'Selected Job Types:',
+                    style: TextStyle(
+                      color: darkTeal.withValues(alpha: 0.7),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _selectedJobTypeIds.map((jobTypeId) {
+                      final jobType = _availableJobTypes.firstWhere(
+                        (jt) => jt['id'] == jobTypeId,
+                        orElse: () => {'display_name': 'Unknown'},
+                      );
+                      final isPrimary = _primaryJobTypeId == jobTypeId;
+
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: isPrimary ? mediumSeaGreen : mediumSeaGreen.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: isPrimary ? mediumSeaGreen : mediumSeaGreen.withValues(alpha: 0.3),
+                            width: 1,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              jobType['display_name'],
+                              style: TextStyle(
+                                color: isPrimary ? Colors.white : mediumSeaGreen,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            if (isPrimary) ...[
+                              const SizedBox(width: 4),
+                              const Icon(
+                                Icons.star,
+                                size: 12,
+                                color: Colors.white,
+                              ),
+                            ],
+                            const SizedBox(width: 4),
+                            GestureDetector(
+                              onTap: () => _removeJobType(jobTypeId),
+                              child: Icon(
+                                Icons.close,
+                                size: 14,
+                                color: isPrimary ? Colors.white : darkTeal,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+
+                Text(
+                  'Select Job Types:',
+                  style: TextStyle(
+                    color: darkTeal.withValues(alpha: 0.7),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _availableJobTypes.map((jobType) {
+                    final isSelected = _selectedJobTypeIds.contains(jobType['id']);
+
+                    return GestureDetector(
+                      onTap: () => _toggleJobType(jobType['id'] as String),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: isSelected ? mediumSeaGreen.withValues(alpha: 0.1) : Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: isSelected ? mediumSeaGreen : paleGreen,
+                            width: 1,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
+                              color: isSelected ? mediumSeaGreen : paleGreen,
+                              size: 16,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              jobType['display_name'],
+                              style: TextStyle(
+                                color: isSelected ? mediumSeaGreen : darkTeal,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+
+                if (_selectedJobTypeIds.length > 1) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    'Primary Job Type:',
+                    style: TextStyle(
+                      color: darkTeal.withValues(alpha: 0.7),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _selectedJobTypeIds.map((jobTypeId) {
+                      final jobType = _availableJobTypes.firstWhere(
+                        (jt) => jt['id'] == jobTypeId,
+                        orElse: () => {'display_name': 'Unknown'},
+                      );
+                      final isPrimary = _primaryJobTypeId == jobTypeId;
+
+                      return GestureDetector(
+                        onTap: () => _setPrimaryJobType(jobTypeId),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: isPrimary ? mediumSeaGreen : Colors.white,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: isPrimary ? mediumSeaGreen : paleGreen,
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                isPrimary ? Icons.star : Icons.star_border,
+                                color: isPrimary ? Colors.white : mediumSeaGreen,
+                                size: 14,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                jobType['display_name'],
+                                style: TextStyle(
+                                  color: isPrimary ? Colors.white : darkTeal,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ],
+            ),
+          ),
       ],
     );
+  }
+
+  void _toggleJobType(String jobTypeId) {
+    setState(() {
+      _hasChanges = true;
+      if (_selectedJobTypeIds.contains(jobTypeId)) {
+        _selectedJobTypeIds.remove(jobTypeId);
+        if (_primaryJobTypeId == jobTypeId) {
+          _primaryJobTypeId = _selectedJobTypeIds.isNotEmpty ? _selectedJobTypeIds.first : null;
+        }
+      } else {
+        _selectedJobTypeIds.add(jobTypeId);
+        if (_selectedJobTypeIds.length == 1) {
+          _primaryJobTypeId = jobTypeId;
+        }
+      }
+    });
+  }
+
+  void _removeJobType(String jobTypeId) {
+    setState(() {
+      _hasChanges = true;
+      _selectedJobTypeIds.remove(jobTypeId);
+      if (_primaryJobTypeId == jobTypeId) {
+        _primaryJobTypeId = _selectedJobTypeIds.isNotEmpty ? _selectedJobTypeIds.first : null;
+      }
+    });
+  }
+
+  void _setPrimaryJobType(String jobTypeId) {
+    setState(() {
+      _hasChanges = true;
+      _primaryJobTypeId = jobTypeId;
+    });
   }
 
   Widget _buildSalarySection() {
@@ -700,6 +923,7 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
                 keyboardType: TextInputType.number,
                 inputFormatters: [
                   FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(7), // Limit to 7 digits (1,000,000)
                   _ThousandsFormatter(),
                 ],
                 validator: (value) {
@@ -715,7 +939,7 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
                   final numericValidation = InputSecurityService.validateSecureNumeric(
                     cleanValue,
                     'Minimum salary',
-                    maxValue: 10000000, // 10 million pesos max
+                    maxValue: 1000000, // 1 million pesos max
                     minValue: 1,
                   );
                   if (numericValidation != null) {
@@ -773,6 +997,7 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
                 keyboardType: TextInputType.number,
                 inputFormatters: [
                   FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(7), // Limit to 7 digits (1,000,000)
                   _ThousandsFormatter(),
                 ],
                 validator: (value) {
@@ -788,7 +1013,7 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
                   final numericValidation = InputSecurityService.validateSecureNumeric(
                     cleanValue,
                     'Maximum salary',
-                    maxValue: 10000000, // 10 million pesos max
+                    maxValue: 1000000, // 1 million pesos max
                     minValue: 1,
                   );
                   if (numericValidation != null) {
@@ -977,26 +1202,7 @@ class _EditJobScreenState extends State<EditJobScreen> with TickerProviderStateM
     );
   }
 
-  String _formatJobTypeDisplay(String type) {
-    switch (type) {
-      case 'full_time':
-        return 'Full Time';
-      case 'part_time':
-        return 'Part Time';
-      case 'contract':
-        return 'Contract';
-      case 'temporary':
-        return 'Temporary';
-      case 'internship':
-        return 'Internship';
-      case 'remote':
-        return 'Remote';
-      default:
-        return type.split('_').map((word) => 
-          word[0].toUpperCase() + word.substring(1)
-        ).join(' ');
-    }
-  }
+  // Removed legacy _formatJobTypeDisplay helper
 }
 
 class _ThousandsFormatter extends TextInputFormatter {

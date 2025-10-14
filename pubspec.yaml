@@ -44,12 +44,22 @@ dependencies:
   flutter_dotenv: ^5.1.0
   url_launcher: ^6.3.2
   google_generative_ai: ^0.4.7
-  syncfusion_flutter_pdf: ^26.2.14
-  file_picker: ^8.0.0+1
+  syncfusion_flutter_pdf: ^27.1.58
+  file_picker: ^10.3.3
+  image_picker: ^1.0.7
   # Calendar and Video Calling Dependencies
-  syncfusion_flutter_calendar: ^26.2.14
-  zego_uikit_prebuilt_call: ^3.8.4
   table_calendar: ^3.1.2
+  zego_uikit_prebuilt_call: ^4.19.0
+  zego_uikit_signaling_plugin: ^2.8.18
+  
+  # OneSignal Push Notifications
+  onesignal_flutter: ^5.3.4
+  permission_handler: ^12.0.1
+  
+  # Firebase
+  firebase_core: ^3.8.1
+  firebase_messaging: ^15.1.5
+  
 
 dev_dependencies:
   flutter_test:
@@ -61,6 +71,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.13.1
   
 
 # For information on the generic Dart part of this file, see the
@@ -107,3 +118,25 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# Flutter Launcher Icons Configuration
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/images/hanapbuhay-logo.png"
+  min_sdk_android: 21 # android min sdk min:16, default 21
+  # Make the icon more prominent and larger
+  adaptive_icon_background: "#FFFFFF" # Your app's green color
+  adaptive_icon_foreground: "assets/images/ic_launcher_foreground.png"
+  web:
+    generate: true
+    image_path: "assets/images/hanapbuhay-logo.png"
+    background_color: "#FFFFFF"
+    theme_color: "#4CA771"
+  windows:
+    generate: true
+    image_path: "assets/images/hanapbuhay-logo.png"
+  macos:
+    generate: true
+    image_path: "assets/images/hanapbuhay-logo.png"
+

@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:io';
+import '../../services/image_service.dart';
+import 'package:image_picker/image_picker.dart';
+import '../../utils/age_validation_utils.dart';
 
 class EditProfileScreen extends StatefulWidget {
   final Map<String, dynamic>? userProfile;
@@ -37,11 +41,20 @@ class _EditProfileScreenState extends State<EditProfileScreen> with TickerProvid
   final _formKey = GlobalKey<FormState>();
   bool _isLoading = false;
   bool _isDataLoading = true;
+  bool _showChangePassword = false;
+  bool _isImageLoading = false;
+  File? _selectedImage;
   Map<String, dynamic>? _currentProfile;
   
   // Phone number validation
   bool _isPhoneNumber = false;
   String _formattedPhoneNumber = '';
+  
+  // Password change controllers
+  final _currentPasswordController = TextEditingController();
+  final _newPasswordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
+  bool _isPasswordLoading = false;
 
   // Animation controllers
   late AnimationController _animationController;
@@ -123,6 +136,111 @@ class _EditProfileScreenState extends State<EditProfileScreen> with TickerProvid
     });
   }
 
+  Future<void> _pickImage() async {
+    try {
+      final ImageSource? source = await ImageService.showImageSourceDialog(context);
+      if (source == null) return;
+
+      final XFile? image = await ImageService.pickImage(
+        source: source,
+        maxWidth: 800,
+        maxHeight: 800,
+        imageQuality: 85,
+      );
+
+      if (image != null) {
+        final File imageFile = File(image.path);
+        
+        // Validate image
+        if (!ImageService.validateImage(imageFile)) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(ImageService.getImageValidationError(imageFile)),
+                backgroundColor: Colors.red,
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            );
+          }
+          return;
+        }
+
+        setState(() {
+          _selectedImage = imageFile;
+          _isImageLoading = true;
+        });
+
+        // Upload image
+        final userId = widget.currentUser?.id;
+        if (userId != null) {
+          final String? imageUrl = await ImageService.uploadProfileImage(
+            imageFile: imageFile,
+            userId: userId,
+          );
+
+          if (imageUrl != null) {
+            // Update profile with new image URL
+            await Supabase.instance.client
+                .from('profiles')
+                .update({'avatar_url': imageUrl})
+                .eq('id', userId);
+
+            // Update the avatar URL controller
+            _avatarUrlController.text = imageUrl;
+
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: const Text('Profile photo updated successfully!'),
+                  backgroundColor: mediumSeaGreen,
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              );
+            }
+          } else {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: const Text('Failed to upload image. Please try again.'),
+                  backgroundColor: Colors.red,
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              );
+            }
+          }
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error picking image: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isImageLoading = false;
+        });
+      }
+    }
+  }
+
   Future<void> _loadProfileData() async {
     try {
       final userId = widget.currentUser?.id;
@@ -182,12 +300,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> with TickerProvid
         _animationController.forward();
       } else {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error loading profile: ${e.toString()}'),
-              backgroundColor: Colors.red,
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading profile: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
             ),
-          );
+          ),
+        );
         }
       }
     }
@@ -225,6 +347,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> with TickerProvid
     _phoneController.dispose();
     _avatarUrlController.dispose();
     _birthdayController.dispose();
+    _currentPasswordController.dispose();
+    _newPasswordController.dispose();
+    _confirmPasswordController.dispose();
     super.dispose();
   }
 
@@ -287,9 +412,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> with TickerProvid
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Profile updated successfully!'),
+          SnackBar(
+            content: const Text('Profile updated successfully!'),
             backgroundColor: mediumSeaGreen,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         );
         
@@ -302,6 +431,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> with TickerProvid
           SnackBar(
             content: Text('Error: ${e.toString()}'),
             backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         );
       }
@@ -312,12 +445,108 @@ class _EditProfileScreenState extends State<EditProfileScreen> with TickerProvid
     }
   }
 
+  Future<void> _changePassword() async {
+    if (_currentPasswordController.text.isEmpty ||
+        _newPasswordController.text.isEmpty ||
+        _confirmPasswordController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Please fill in all password fields'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (_newPasswordController.text != _confirmPasswordController.text) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('New passwords do not match'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (_newPasswordController.text.length < 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('New password must be at least 6 characters'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isPasswordLoading = true;
+    });
+
+    try {
+      await Supabase.instance.client.auth.updateUser(
+        UserAttributes(
+          password: _newPasswordController.text,
+        ),
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Password updated successfully!'),
+            backgroundColor: mediumSeaGreen,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        );
+
+        // Clear password fields
+        _currentPasswordController.clear();
+        _newPasswordController.clear();
+        _confirmPasswordController.clear();
+        setState(() {
+          _showChangePassword = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to update password: ${e.toString()}'),
+            backgroundColor: Colors.red.shade400,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        );
+      }
+    } finally {
+      setState(() {
+        _isPasswordLoading = false;
+      });
+    }
+  }
+
   Future<void> _selectBirthday() async {
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: _selectedBirthday ?? DateTime.now().subtract(const Duration(days: 6570)), // 18 years ago
+      initialDate: _selectedBirthday ?? AgeValidationUtils.getMinimumBirthDate(), // Exactly 18 years ago
       firstDate: DateTime(1900),
-      lastDate: DateTime.now(),
+      lastDate: AgeValidationUtils.getMinimumBirthDate(), // Must be at least 18 years old
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
@@ -408,8 +637,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> with TickerProvid
             'Edit Profile',
             style: TextStyle(
               color: darkTeal,
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.5,
             ),
           ),
           const Spacer(),
@@ -487,7 +717,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> with TickerProvid
     return Form(
       key: _formKey,
       child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -495,49 +725,105 @@ class _EditProfileScreenState extends State<EditProfileScreen> with TickerProvid
             Center(
               child: Column(
                 children: [
-                  Container(
-                    width: 100,
-                    height: 100,
-                    decoration: BoxDecoration(
-                      color: mediumSeaGreen.withValues(alpha: 0.1),
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: mediumSeaGreen.withValues(alpha: 0.3),
-                        width: 2,
-                      ),
+                  GestureDetector(
+                    onTap: _isImageLoading ? null : _pickImage,
+                    child: Stack(
+                      children: [
+                        Container(
+                          width: 80,
+                          height: 80,
+                          decoration: BoxDecoration(
+                            color: mediumSeaGreen.withValues(alpha: 0.1),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: mediumSeaGreen.withValues(alpha: 0.3),
+                              width: 2,
+                            ),
+                          ),
+                          child: _selectedImage != null
+                              ? ClipOval(
+                                  child: Image.file(
+                                    _selectedImage!,
+                                    fit: BoxFit.cover,
+                                    width: 80,
+                                    height: 80,
+                                  ),
+                                )
+                              : _avatarUrlController.text.isNotEmpty
+                                  ? ClipOval(
+                                      child: Image.network(
+                                        _avatarUrlController.text,
+                                        fit: BoxFit.cover,
+                                        width: 80,
+                                        height: 80,
+                                        errorBuilder: (context, error, stackTrace) {
+                                          return Icon(
+                                            Icons.person,
+                                            color: mediumSeaGreen,
+                                            size: 40,
+                                          );
+                                        },
+                                      ),
+                                    )
+                                  : Icon(
+                                      Icons.person,
+                                      color: mediumSeaGreen,
+                                      size: 40,
+                                    ),
+                        ),
+                        if (_isImageLoading)
+                          Positioned.fill(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.5),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Center(
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            ),
+                          ),
+                        Positioned(
+                          bottom: 0,
+                          right: 0,
+                          child: Container(
+                            width: 24,
+                            height: 24,
+                            decoration: BoxDecoration(
+                              color: mediumSeaGreen,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: Colors.white,
+                                width: 2,
+                              ),
+                            ),
+                            child: Icon(
+                              _isImageLoading ? Icons.hourglass_empty : Icons.camera_alt,
+                              color: Colors.white,
+                              size: 12,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    child: _avatarUrlController.text.isNotEmpty
-                        ? ClipOval(
-                            child: Image.network(
-                              _avatarUrlController.text,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                return Icon(
-                                  Icons.person,
-                                  color: mediumSeaGreen,
-                                  size: 50,
-                                );
-                              },
+                  ),
+                  const SizedBox(height: 12),
+                  TextButton.icon(
+                    onPressed: _isImageLoading ? null : _pickImage,
+                    icon: _isImageLoading 
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              color: mediumSeaGreen,
+                              strokeWidth: 2,
                             ),
                           )
-                        : Icon(
-                            Icons.person,
-                            color: mediumSeaGreen,
-                            size: 50,
-                          ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextButton.icon(
-                    onPressed: () {
-                      // TODO: Implement image picker
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Image picker coming soon! For now, enter avatar URL below.'),
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.camera_alt, size: 18),
-                    label: const Text('Change Photo'),
+                        : const Icon(Icons.camera_alt, size: 16),
+                    label: Text(_isImageLoading ? 'Uploading...' : 'Change Photo'),
                     style: TextButton.styleFrom(
                       foregroundColor: mediumSeaGreen,
                     ),
@@ -549,136 +835,133 @@ class _EditProfileScreenState extends State<EditProfileScreen> with TickerProvid
             const SizedBox(height: 32),
 
             // Personal Information Section
-            const Text(
-              'Personal Information',
-              style: TextStyle(
-                color: darkTeal,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            _buildTextField(
-              controller: _displayNameController,
-              label: 'Display Name',
-              hint: 'Enter your display name',
+            _buildSectionCard(
+              title: 'Personal Information',
               icon: Icons.person_outline,
-              validator: (value) {
-                if (value == null || value.trim().isEmpty) {
-                  return 'Display name is required';
-                }
-                return null;
-              },
-            ),
+              children: [
+                _buildModernTextField(
+                  controller: _displayNameController,
+                  label: 'Display Name',
+                  hint: 'Enter your display name',
+                  icon: Icons.person_outline,
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Display name is required';
+                    }
+                    return null;
+                  },
+                ),
 
-            const SizedBox(height: 16),
+                const SizedBox(height: 20),
 
-            _buildTextField(
-              controller: _usernameController,
-              label: 'Username',
-              hint: 'Enter your username (3-20 chars, letters, numbers, underscore only)',
-              icon: Icons.alternate_email,
-              prefix: '@',
-              inputFormatters: [
-                FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9_]')),
-                LengthLimitingTextInputFormatter(20),
+                _buildModernTextField(
+                  controller: _usernameController,
+                  label: 'Username',
+                  hint: 'Enter your username (3-20 chars, letters, numbers, underscore only)',
+                  icon: Icons.alternate_email,
+                  prefix: '@',
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9_]')),
+                    LengthLimitingTextInputFormatter(20),
+                  ],
+                  validator: (value) {
+                    if (value != null && value.isNotEmpty) {
+                      if (value.length < 3) {
+                        return 'Username must be at least 3 characters';
+                      }
+                      if (value.length > 20) {
+                        return 'Username must be no more than 20 characters';
+                      }
+                      if (!RegExp(r'^[a-zA-Z0-9_]+$').hasMatch(value)) {
+                        return 'Username can only contain letters, numbers, and underscores';
+                      }
+                      if (value.startsWith('_') || value.endsWith('_')) {
+                        return 'Username cannot start or end with underscore';
+                      }
+                    }
+                    return null;
+                  },
+                ),
+
+                const SizedBox(height: 20),
+
+                _buildModernTextField(
+                  controller: _fullNameController,
+                  label: 'Full Name',
+                  hint: 'Enter your full name (letters and spaces only)',
+                  icon: Icons.badge_outlined,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z\s]')),
+                    LengthLimitingTextInputFormatter(50),
+                  ],
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Full name is required';
+                    }
+                    if (value.trim().length < 2) {
+                      return 'Full name must be at least 2 characters';
+                    }
+                    if (!RegExp(r'^[a-zA-Z\s]+$').hasMatch(value.trim())) {
+                      return 'Full name can only contain letters and spaces';
+                    }
+                    return null;
+                  },
+                ),
+
+                const SizedBox(height: 20),
+
+                _buildModernBirthdayField(),
               ],
-              validator: (value) {
-                if (value != null && value.isNotEmpty) {
-                  if (value.length < 3) {
-                    return 'Username must be at least 3 characters';
-                  }
-                  if (value.length > 20) {
-                    return 'Username must be no more than 20 characters';
-                  }
-                  if (!RegExp(r'^[a-zA-Z0-9_]+$').hasMatch(value)) {
-                    return 'Username can only contain letters, numbers, and underscores';
-                  }
-                  if (value.startsWith('_') || value.endsWith('_')) {
-                    return 'Username cannot start or end with underscore';
-                  }
-                }
-                return null;
-              },
-            ),
-
-            const SizedBox(height: 16),
-
-            _buildTextField(
-              controller: _fullNameController,
-              label: 'Full Name',
-              hint: 'Enter your full name (letters and spaces only)',
-              icon: Icons.badge_outlined,
-              inputFormatters: [
-                FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z\s]')),
-                LengthLimitingTextInputFormatter(50),
-              ],
-              validator: (value) {
-                if (value == null || value.trim().isEmpty) {
-                  return 'Full name is required';
-                }
-                if (value.trim().length < 2) {
-                  return 'Full name must be at least 2 characters';
-                }
-                if (!RegExp(r'^[a-zA-Z\s]+$').hasMatch(value.trim())) {
-                  return 'Full name can only contain letters and spaces';
-                }
-                return null;
-              },
             ),
 
             const SizedBox(height: 24),
 
             // Contact Information Section
-            const Text(
-              'Contact Information',
-              style: TextStyle(
-                color: darkTeal,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
+            _buildSectionCard(
+              title: 'Contact Information',
+              icon: Icons.contact_phone_outlined,
+              children: [
+                _buildModernTextField(
+                  controller: _phoneController,
+                  label: 'Phone Number (Optional)',
+                  hint: 'Enter your Philippines phone number',
+                  icon: Icons.phone_outlined,
+                  keyboardType: TextInputType.phone,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[0-9+\s\-\(\)]')),
+                    LengthLimitingTextInputFormatter(15),
+                  ],
+                  onChanged: _validateInput,
+                ),
 
-            _buildTextField(
-              controller: _phoneController,
-              label: 'Phone Number (Optional)',
-              hint: 'Enter your Philippines phone number',
-              icon: Icons.phone_outlined,
-              keyboardType: TextInputType.phone,
-              inputFormatters: [
-                FilteringTextInputFormatter.allow(RegExp(r'[0-9+\s\-\(\)]')),
-                LengthLimitingTextInputFormatter(15),
+                const SizedBox(height: 20),
+
+                _buildModernTextField(
+                  controller: _avatarUrlController,
+                  label: 'Avatar URL',
+                  hint: 'Enter avatar image URL (must be valid URL)',
+                  icon: Icons.image_outlined,
+                  keyboardType: TextInputType.url,
+                  validator: (value) {
+                    if (value != null && value.trim().isNotEmpty) {
+                      final uri = Uri.tryParse(value.trim());
+                      if (uri == null || !uri.hasAbsolutePath) {
+                        return 'Please enter a valid URL (e.g., https://example.com/image.jpg)';
+                      }
+                      if (!uri.scheme.startsWith('http')) {
+                        return 'URL must start with http:// or https://';
+                      }
+                    }
+                    return null;
+                  },
+                ),
               ],
-              onChanged: _validateInput,
             ),
 
-            const SizedBox(height: 16),
+            const SizedBox(height: 24),
 
-            _buildBirthdayField(),
-
-            const SizedBox(height: 16),
-
-            _buildTextField(
-              controller: _avatarUrlController,
-              label: 'Avatar URL',
-              hint: 'Enter avatar image URL (must be valid URL)',
-              icon: Icons.image_outlined,
-              keyboardType: TextInputType.url,
-              validator: (value) {
-                if (value != null && value.trim().isNotEmpty) {
-                  final uri = Uri.tryParse(value.trim());
-                  if (uri == null || !uri.hasAbsolutePath) {
-                    return 'Please enter a valid URL (e.g., https://example.com/image.jpg)';
-                  }
-                  if (!uri.scheme.startsWith('http')) {
-                    return 'URL must start with http:// or https://';
-                  }
-                }
-                return null;
-              },
-            ),
+            // Security Section
+            _buildSecuritySection(),
 
             const SizedBox(height: 32),
 
@@ -691,25 +974,26 @@ class _EditProfileScreenState extends State<EditProfileScreen> with TickerProvid
                   backgroundColor: mediumSeaGreen,
                   foregroundColor: Colors.white,
                   elevation: 0,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
                 child: _isLoading
                     ? const SizedBox(
-                        height: 20,
-                        width: 20,
+                        height: 18,
+                        width: 18,
                         child: CircularProgressIndicator(
                           color: Colors.white,
                           strokeWidth: 2,
                         ),
                       )
-                    : const Text(
+                    : Text(
                         'Save Changes',
-                        style: TextStyle(
-                          fontSize: 16,
+                        style: const TextStyle(
+                          fontSize: 13,
                           fontWeight: FontWeight.w600,
+                          letterSpacing: 0.3,
                         ),
                       ),
               ),
@@ -720,76 +1004,63 @@ class _EditProfileScreenState extends State<EditProfileScreen> with TickerProvid
     );
   }
 
-  Widget _buildBirthdayField() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Birthday',
-          style: const TextStyle(
-            color: darkTeal,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
+  Widget _buildSectionCard({
+    required String title,
+    required IconData icon,
+    required List<Widget> children,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: darkTeal.withValues(alpha: 0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
-        ),
-        const SizedBox(height: 8),
-        GestureDetector(
-          onTap: _selectBirthday,
-          child: Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 18,
-            ),
-            decoration: BoxDecoration(
-              color: lightMint.withValues(alpha: 0.3),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: paleGreen.withValues(alpha: 0.5),
-                width: 1.5,
-              ),
-            ),
-            child: Row(
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
                 Container(
-                  margin: const EdgeInsets.only(right: 12),
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
                     color: mediumSeaGreen.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(10),
                   ),
                   child: Icon(
-                    Icons.cake,
+                    icon,
                     color: mediumSeaGreen,
-                    size: 16,
+                    size: 20,
                   ),
                 ),
-                Expanded(
-                  child: Text(
-                    _birthdayController.text.isEmpty
-                        ? 'Select your birthday'
-                        : _birthdayController.text,
-                    style: TextStyle(
-                      color: _birthdayController.text.isEmpty
-                          ? darkTeal.withValues(alpha: 0.5)
-                          : darkTeal,
-                      fontSize: 14,
-                    ),
+                const SizedBox(width: 12),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: darkTeal,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.3,
                   ),
-                ),
-                Icon(
-                  Icons.calendar_today,
-                  color: darkTeal.withValues(alpha: 0.6),
-                  size: 20,
                 ),
               ],
             ),
-          ),
+            const SizedBox(height: 20),
+            ...children,
+          ],
         ),
-      ],
+      ),
     );
   }
 
-  Widget _buildTextField({
+  Widget _buildModernTextField({
     required TextEditingController controller,
     required String label,
     required String hint,
@@ -807,8 +1078,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> with TickerProvid
           label,
           style: const TextStyle(
             color: darkTeal,
-            fontSize: 14,
+            fontSize: 11,
             fontWeight: FontWeight.w600,
+            letterSpacing: 0.2,
           ),
         ),
         const SizedBox(height: 8),
@@ -818,11 +1090,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> with TickerProvid
           validator: validator,
           inputFormatters: inputFormatters,
           onChanged: onChanged,
+          style: const TextStyle(
+            fontSize: 11,
+            color: darkTeal,
+            letterSpacing: 0.1,
+          ),
           decoration: InputDecoration(
             hintText: hint,
             hintStyle: TextStyle(
               color: darkTeal.withValues(alpha: 0.5),
-              fontSize: 14,
+              fontSize: 11,
+              letterSpacing: 0.1,
             ),
             prefixIcon: Container(
               margin: const EdgeInsets.all(12),
@@ -834,13 +1112,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> with TickerProvid
               child: Icon(
                 icon,
                 color: mediumSeaGreen,
-                size: 18,
+                size: 16,
               ),
             ),
             prefixText: prefix,
             prefixStyle: TextStyle(
               color: darkTeal.withValues(alpha: 0.7),
-              fontSize: 16,
+              fontSize: 11,
               fontWeight: FontWeight.w500,
             ),
             contentPadding: const EdgeInsets.symmetric(
@@ -850,14 +1128,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> with TickerProvid
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide(
-                color: paleGreen.withValues(alpha: 0.5),
+                color: paleGreen.withValues(alpha: 0.3),
                 width: 1,
               ),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide(
-                color: paleGreen.withValues(alpha: 0.5),
+                color: paleGreen.withValues(alpha: 0.3),
                 width: 1,
               ),
             ),
@@ -876,45 +1154,379 @@ class _EditProfileScreenState extends State<EditProfileScreen> with TickerProvid
               ),
             ),
             filled: true,
-            fillColor: lightMint.withValues(alpha: 0.3),
+            fillColor: lightMint.withValues(alpha: 0.2),
           ),
         ),
-        // Phone number format helper (only for phone fields)
-        if (onChanged != null && controller == _phoneController && controller.text.isNotEmpty && !_isPhoneNumber && controller.text.length > 3)
+        // Phone number validation feedback
+        if (onChanged != null && controller == _phoneController && controller.text.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              'For Philippines: Enter 9XXXXXXXXX or +63 9XX XXX XXXX',
-              style: TextStyle(
-                color: Colors.red.withValues(alpha: 0.7),
-                fontSize: 10,
-                fontStyle: FontStyle.italic,
-              ),
+            padding: const EdgeInsets.only(top: 6),
+            child: _buildPhoneValidation(),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildPhoneValidation() {
+    if (_isPhoneNumber && _formattedPhoneNumber.isNotEmpty) {
+      return Row(
+        children: [
+          Icon(
+            Icons.check_circle,
+            color: mediumSeaGreen,
+            size: 14,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            'Valid: $_formattedPhoneNumber',
+            style: TextStyle(
+              color: mediumSeaGreen,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.1,
             ),
           ),
-        // Valid phone number confirmation (only for phone fields)
-        if (onChanged != null && controller == _phoneController && _isPhoneNumber && _formattedPhoneNumber.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
+        ],
+      );
+    } else if (!_isPhoneNumber && _phoneController.text.length > 3) {
+      return Text(
+        'For Philippines: Enter 9XXXXXXXXX or +63 9XX XXX XXXX',
+        style: TextStyle(
+          color: Colors.red.withValues(alpha: 0.7),
+          fontSize: 10,
+          fontStyle: FontStyle.italic,
+          letterSpacing: 0.1,
+        ),
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
+  Widget _buildModernBirthdayField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Birthday',
+          style: const TextStyle(
+            color: darkTeal,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.2,
+          ),
+        ),
+        const SizedBox(height: 8),
+        GestureDetector(
+          onTap: _selectBirthday,
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 16,
+            ),
+            decoration: BoxDecoration(
+              color: lightMint.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: paleGreen.withValues(alpha: 0.3),
+                width: 1,
+              ),
+            ),
             child: Row(
               children: [
-                Icon(
-                  Icons.check_circle,
-                  color: mediumSeaGreen,
-                  size: 14,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  'Valid: $_formattedPhoneNumber',
-                  style: TextStyle(
+                Container(
+                  margin: const EdgeInsets.only(right: 12),
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: mediumSeaGreen.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    Icons.cake_outlined,
                     color: mediumSeaGreen,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
+                    size: 16,
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    _birthdayController.text.isEmpty
+                        ? 'Select your birthday'
+                        : _birthdayController.text,
+                    style: TextStyle(
+                      color: _birthdayController.text.isEmpty
+                          ? darkTeal.withValues(alpha: 0.5)
+                          : darkTeal,
+                      fontSize: 11,
+                      letterSpacing: 0.1,
+                    ),
+                  ),
+                ),
+                Icon(
+                  Icons.calendar_today,
+                  color: darkTeal.withValues(alpha: 0.6),
+                  size: 18,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSecuritySection() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: darkTeal.withValues(alpha: 0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: mediumSeaGreen.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    Icons.security_outlined,
+                    color: mediumSeaGreen,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Security',
+                        style: const TextStyle(
+                          color: darkTeal,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                      Text(
+                        'Manage your account security',
+                        style: TextStyle(
+                          color: darkTeal.withValues(alpha: 0.6),
+                          fontSize: 10,
+                          letterSpacing: 0.1,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
           ),
+          const Divider(height: 1),
+          ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            leading: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: mediumSeaGreen.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                Icons.lock_outline,
+                color: mediumSeaGreen,
+                size: 18,
+              ),
+            ),
+            title: Text(
+              'Change Password',
+              style: const TextStyle(
+                color: darkTeal,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.2,
+              ),
+            ),
+            subtitle: Text(
+              'Update your account password',
+              style: TextStyle(
+                color: darkTeal.withValues(alpha: 0.6),
+                fontSize: 10,
+                letterSpacing: 0.1,
+              ),
+            ),
+            trailing: Switch(
+              value: _showChangePassword,
+              onChanged: (value) {
+                setState(() {
+                  _showChangePassword = value;
+                  if (!value) {
+                    _currentPasswordController.clear();
+                    _newPasswordController.clear();
+                    _confirmPasswordController.clear();
+                  }
+                });
+              },
+              activeColor: mediumSeaGreen,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+          if (_showChangePassword) ...[
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  _buildModernPasswordField(
+                    controller: _currentPasswordController,
+                    label: 'Current Password',
+                    hint: 'Enter your current password',
+                  ),
+                  const SizedBox(height: 16),
+                  _buildModernPasswordField(
+                    controller: _newPasswordController,
+                    label: 'New Password',
+                    hint: 'Enter your new password',
+                  ),
+                  const SizedBox(height: 16),
+                  _buildModernPasswordField(
+                    controller: _confirmPasswordController,
+                    label: 'Confirm New Password',
+                    hint: 'Confirm your new password',
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _isPasswordLoading ? null : _changePassword,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: mediumSeaGreen,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: _isPasswordLoading
+                          ? const SizedBox(
+                              height: 18,
+                              width: 18,
+                              child: CircularProgressIndicator(
+                                color: Colors.white,
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : Text(
+                              'Update Password',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildModernPasswordField({
+    required TextEditingController controller,
+    required String label,
+    required String hint,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: darkTeal,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.2,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextFormField(
+          controller: controller,
+          obscureText: true,
+          style: const TextStyle(
+            fontSize: 11,
+            color: darkTeal,
+            letterSpacing: 0.1,
+          ),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: TextStyle(
+              color: darkTeal.withValues(alpha: 0.5),
+              fontSize: 11,
+              letterSpacing: 0.1,
+            ),
+            prefixIcon: Container(
+              margin: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: mediumSeaGreen.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                Icons.lock_outline,
+                color: mediumSeaGreen,
+                size: 16,
+              ),
+            ),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 16,
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(
+                color: paleGreen.withValues(alpha: 0.3),
+                width: 1,
+              ),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(
+                color: paleGreen.withValues(alpha: 0.3),
+                width: 1,
+              ),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(
+                color: mediumSeaGreen,
+                width: 2,
+              ),
+            ),
+            errorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(
+                color: Colors.red,
+                width: 1,
+              ),
+            ),
+            filled: true,
+            fillColor: lightMint.withValues(alpha: 0.2),
+          ),
+        ),
       ],
     );
   }

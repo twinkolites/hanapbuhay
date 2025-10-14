@@ -3,8 +3,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../services/job_service.dart';
 import '../../services/auth_service.dart';
 import '../login_screen.dart';
-import 'edit_company_screen.dart';
+import 'enhanced_edit_company_screen.dart';
 import 'edit_profile_screen.dart';
+import 'edit_job_screen.dart';
+import 'applications_screen.dart';
 
 final supabase = Supabase.instance.client;
 
@@ -67,10 +69,21 @@ class _EmployerProfileScreenState extends State<EmployerProfileScreen> with Tick
   }
 
   Future<void> _loadProfileData() async {
+    final stopwatch = Stopwatch()..start();
     try {
       final user = supabase.auth.currentUser;
       if (user == null) return;
 
+      // Check cache validity (30 seconds cache)
+      final now = DateTime.now();
+      if (_lastDataLoad != null && 
+          now.difference(_lastDataLoad!).inSeconds < 30) {
+        debugPrint('Profile data loaded from cache (${stopwatch.elapsedMilliseconds}ms)');
+        return; // Use cached data
+      }
+
+      debugPrint('Loading profile data from database...');
+      
       // Use optimized stored procedure to get all employer data in one query
       final response = await supabase.rpc('get_employer_profile_data', params: {
         'user_uuid': user.id,
@@ -86,23 +99,52 @@ class _EmployerProfileScreenState extends State<EmployerProfileScreen> with Tick
         final companyData = profileData['company_data'] as Map<String, dynamic>?;
         
         // Parse jobs data
-        final jobsData = profileData['jobs_data'] as List<dynamic>?;
-        final jobs = jobsData != null 
-            ? List<Map<String, dynamic>>.from(jobsData)
+        final jobsData = profileData['jobs_data'] as Map<String, dynamic>?;
+        final jobsList = jobsData?['jobs'] as List<dynamic>?;
+        final jobs = jobsList != null 
+            ? List<Map<String, dynamic>>.from(jobsList)
             : <Map<String, dynamic>>[];
 
-        setState(() {
-          _userProfile = userProfileData;
-          _company = companyData;
-          _jobs = jobs;
-          _isLoading = false;
-          _lastDataLoad = DateTime.now(); // Cache timestamp
-        });
+        // Parse statistics
+        final statistics = profileData['statistics'] as Map<String, dynamic>?;
+        final jobsStats = statistics?['jobs_stats'] as Map<String, dynamic>?;
+        final applicationsStats = statistics?['applications_stats'] as Map<String, dynamic>?;
+
+        if (mounted) {
+          setState(() {
+            _userProfile = userProfileData;
+            _company = companyData;
+            _jobs = jobs;
+            _isLoading = false;
+            _lastDataLoad = now; // Update cache timestamp
+            
+            // Store statistics for quick access
+            if (jobsStats != null) {
+              _userProfile?['total_jobs'] = jobsStats['total_jobs'];
+              _userProfile?['active_jobs'] = jobsStats['active_jobs'];
+            }
+            if (applicationsStats != null) {
+              _userProfile?['total_applications'] = applicationsStats['total_applications'];
+              _userProfile?['unique_applicants'] = applicationsStats['unique_applicants'];
+            }
+          });
+          
+          stopwatch.stop();
+          debugPrint('Profile data loaded successfully (${stopwatch.elapsedMilliseconds}ms)');
+          
+          // Load additional data in background for better UX
+          _loadAdditionalData();
+        }
       } else {
         // Fallback to original method if procedure fails
+        debugPrint('Stored procedure returned empty result, using fallback');
         await _loadProfileDataFallback();
       }
     } catch (e) {
+      debugPrint('Error loading profile data: $e');
+      stopwatch.stop();
+      debugPrint('Profile data load failed after ${stopwatch.elapsedMilliseconds}ms');
+      
       // Fallback to original method if procedure fails
       await _loadProfileDataFallback();
     }
@@ -126,7 +168,14 @@ class _EmployerProfileScreenState extends State<EmployerProfileScreen> with Tick
       // Load jobs if company exists
       List<Map<String, dynamic>> jobs = [];
       if (company != null) {
-        jobs = await JobService.getJobsByCompany(company['id']);
+        // Only get jobs from jobs table (not archived)
+        final jobsResponse = await supabase
+            .from('jobs')
+            .select('*')
+            .eq('company_id', company['id'])
+            .order('created_at', ascending: false);
+        
+        jobs = List<Map<String, dynamic>>.from(jobsResponse);
         
         // Fetch application counts for each job
         for (int i = 0; i < jobs.length; i++) {
@@ -175,15 +224,34 @@ class _EmployerProfileScreenState extends State<EmployerProfileScreen> with Tick
   }
 
   void _navigateToEditCompany() async {
+    // Get company details if company exists
+    Map<String, dynamic>? companyDetails;
+    if (_company != null) {
+      try {
+        final response = await supabase
+            .from('company_details')
+            .select('*')
+            .eq('company_id', _company!['id'])
+            .maybeSingle();
+        companyDetails = response;
+      } catch (e) {
+        debugPrint('Error fetching company details: $e');
+      }
+    }
+
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => EditCompanyScreen(company: _company),
+        builder: (context) => EnhancedEditCompanyScreen(
+          company: _company,
+          companyDetails: companyDetails,
+        ),
       ),
     );
     
     if (result == true) {
-      // Reload data if company was updated
+      // Invalidate cache and reload data if company was updated
+      await _invalidateCache();
       await _loadProfileData();
     }
   }
@@ -198,7 +266,8 @@ class _EmployerProfileScreenState extends State<EmployerProfileScreen> with Tick
       );
       
       if (result == true) {
-        // Reload data if profile was updated
+        // Invalidate cache and reload data if profile was updated
+        await _invalidateCache();
         await _loadProfileData();
       }
     }
@@ -209,6 +278,76 @@ class _EmployerProfileScreenState extends State<EmployerProfileScreen> with Tick
     final now = DateTime.now();
     if (_lastDataLoad == null || now.difference(_lastDataLoad!).inSeconds > 30) {
       await _loadProfileData();
+    }
+  }
+
+  // Force refresh data (bypass cache)
+  Future<void> forceRefreshProfileData() async {
+    _lastDataLoad = null; // Clear cache
+    await _loadProfileData();
+  }
+
+  // Load additional data in batches for better performance
+  Future<void> _loadAdditionalData() async {
+    try {
+      final user = supabase.auth.currentUser;
+      if (user == null) return;
+
+      // Load recent jobs with application counts
+      final recentJobsResponse = await supabase.rpc('get_employer_recent_jobs', params: {
+        'user_uuid': user.id,
+        'limit_count': 10,
+      });
+
+      // Load company statistics
+      final statsResponse = await supabase.rpc('get_company_statistics', params: {
+        'user_uuid': user.id,
+      });
+
+      if (mounted) {
+        setState(() {
+          // Update jobs with additional data
+          if (recentJobsResponse is List) {
+            final recentJobs = List<Map<String, dynamic>>.from(recentJobsResponse);
+            // Merge with existing jobs data
+            for (final recentJob in recentJobs) {
+              final existingJobIndex = _jobs.indexWhere((job) => job['id'] == recentJob['id']);
+              if (existingJobIndex != -1) {
+                _jobs[existingJobIndex].addAll(recentJob);
+              }
+            }
+          }
+
+          // Update statistics
+          if (statsResponse is List && statsResponse.isNotEmpty) {
+            final stats = statsResponse.first;
+            _userProfile?['total_jobs'] = stats['total_jobs'];
+            _userProfile?['active_jobs'] = stats['active_jobs'];
+            _userProfile?['total_applications'] = stats['total_applications'];
+            _userProfile?['unique_applicants'] = stats['unique_applicants'];
+            _userProfile?['avg_applications_per_job'] = stats['avg_applications_per_job'];
+            _userProfile?['recent_applications'] = stats['recent_applications'];
+            _userProfile?['job_types_distribution'] = stats['job_types_distribution'];
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading additional data: $e');
+    }
+  }
+
+  // Invalidate cache when data changes
+  Future<void> _invalidateCache() async {
+    try {
+      final user = supabase.auth.currentUser;
+      if (user != null) {
+        await supabase.rpc('invalidate_employer_cache', params: {
+          'user_uuid': user.id,
+        });
+        _lastDataLoad = null; // Clear local cache
+      }
+    } catch (e) {
+      debugPrint('Error invalidating cache: $e');
     }
   }
 
@@ -280,39 +419,45 @@ class _EmployerProfileScreenState extends State<EmployerProfileScreen> with Tick
   }
 
   Widget _buildContent() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Profile Header
-          _buildProfileHeader(),
-          
-          const SizedBox(height: 32),
-          
-          // Statistics Cards
-          _buildStatisticsCards(),
-          
-          const SizedBox(height: 32),
-          
-          // Company Section
-          _buildCompanySection(),
-          
-          const SizedBox(height: 32),
-          
-          // Recent Jobs
-          _buildRecentJobs(),
-          
-          const SizedBox(height: 32),
-          
-          // Settings Section
-          _buildSettingsSection(),
-          
-          const SizedBox(height: 16),
-          
-          // Logout Section
-          _buildLogoutSection(),
-        ],
+    return RefreshIndicator(
+      onRefresh: forceRefreshProfileData,
+      color: mediumSeaGreen,
+      backgroundColor: Colors.white,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Profile Header
+            _buildProfileHeader(),
+            
+            const SizedBox(height: 32),
+            
+            // Statistics Cards
+            _buildStatisticsCards(),
+            
+            const SizedBox(height: 32),
+            
+            // Company Section
+            _buildCompanySection(),
+            
+            const SizedBox(height: 32),
+            
+            // Recent Jobs
+            _buildRecentJobs(),
+            
+            const SizedBox(height: 32),
+            
+            // Settings Section
+            _buildSettingsSection(),
+            
+            const SizedBox(height: 16),
+            
+            // Logout Section
+            _buildLogoutSection(),
+          ],
+        ),
       ),
     );
   }
@@ -766,17 +911,19 @@ class _EmployerProfileScreenState extends State<EmployerProfileScreen> with Tick
         
         if (_jobs.length > 3)
           Center(
-            child: TextButton(
-              onPressed: () {
-                // TODO: Navigate to jobs list
-              },
-              child: Text(
+            child: TextButton.icon(
+              onPressed: _showAllJobsModal,
+              icon: const Icon(Icons.list_alt, size: 16),
+              label: Text(
                 'View All Jobs (${_jobs.length})',
                 style: TextStyle(
                   color: mediumSeaGreen,
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
                 ),
+              ),
+              style: TextButton.styleFrom(
+                foregroundColor: mediumSeaGreen,
               ),
             ),
           ),
@@ -786,96 +933,512 @@ class _EmployerProfileScreenState extends State<EmployerProfileScreen> with Tick
 
   Widget _buildJobCard(Map<String, dynamic> job) {
     final applicationsCount = job['applications_count'] as int? ?? 0;
+    final isActive = job['status'] == 'open';
     
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _showJobDetailsModal(job),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: paleGreen.withValues(alpha: 0.3),
-          width: 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: darkTeal.withValues(alpha: 0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: paleGreen.withValues(alpha: 0.3),
+              width: 1,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: darkTeal.withValues(alpha: 0.05),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          job['title'] ?? 'Untitled Job',
+                          style: const TextStyle(
+                            color: darkTeal,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.location_on_outlined,
+                              color: darkTeal.withValues(alpha: 0.6),
+                              size: 12,
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                job['location'] ?? 'Location not specified',
+                                style: TextStyle(
+                                  color: darkTeal.withValues(alpha: 0.7),
+                                  fontSize: 11,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: isActive 
+                        ? mediumSeaGreen.withValues(alpha: 0.1)
+                        : Colors.grey.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      isActive ? 'Active' : 'Closed',
+                      style: TextStyle(
+                        color: isActive ? mediumSeaGreen : Colors.grey,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              
+              const SizedBox(height: 10),
+              
+              // Salary and applications row
+              Row(
+                children: [
+                  if (job['salary_min'] != null || job['salary_max'] != null) ...[
+                    Icon(
+                      Icons.payments_outlined,
+                      color: mediumSeaGreen,
+                      size: 14,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      _formatSalary(job['salary_min'], job['salary_max']),
+                      style: TextStyle(
+                        color: mediumSeaGreen,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                  ],
+                  Icon(
+                    Icons.people_outline,
+                    color: darkTeal.withValues(alpha: 0.6),
+                    size: 14,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    '$applicationsCount application${applicationsCount == 1 ? '' : 's'}',
+                    style: TextStyle(
+                      color: darkTeal.withValues(alpha: 0.7),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const Spacer(),
+                  Icon(
+                    Icons.arrow_forward_ios,
+                    color: darkTeal.withValues(alpha: 0.4),
+                    size: 12,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatSalary(int? min, int? max) {
+    if (min != null && max != null) {
+      return '₱${_formatNumber(min)}-${_formatNumber(max)}';
+    } else if (min != null) {
+      return '₱${_formatNumber(min)}+';
+    } else if (max != null) {
+      return 'Up to ₱${_formatNumber(max)}';
+    }
+    return 'Negotiable';
+  }
+
+  String _formatNumber(int number) {
+    if (number >= 1000000) {
+      return '${(number / 1000000).toStringAsFixed(1)}M';
+    } else if (number >= 1000) {
+      return '${(number / 1000).toStringAsFixed(0)}K';
+    }
+    return number.toString();
+  }
+
+  void _showJobDetailsModal(Map<String, dynamic> job) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.75,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(24),
+            topRight: Radius.circular(24),
+          ),
+        ),
+        child: Column(
+          children: [
+            // Handle
+            Container(
+              margin: const EdgeInsets.only(top: 12),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: darkTeal.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            
+            // Header
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          job['title'] ?? 'Untitled Job',
+                          style: const TextStyle(
+                            color: darkTeal,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.location_on_outlined,
+                              color: mediumSeaGreen,
+                              size: 14,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              job['location'] ?? 'Location not specified',
+                              style: TextStyle(
+                                color: darkTeal.withValues(alpha: 0.7),
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: darkTeal.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(
+                        Icons.close,
+                        color: darkTeal,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            // Job details content
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      job['title'] ?? 'Untitled Job',
-                      style: const TextStyle(
-                        color: darkTeal,
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    // Status and stats
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: job['status'] == 'open' 
+                              ? mediumSeaGreen.withValues(alpha: 0.1)
+                              : Colors.grey.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                job['status'] == 'open' ? Icons.circle : Icons.circle_outlined,
+                                color: job['status'] == 'open' ? mediumSeaGreen : Colors.grey,
+                                size: 8,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                job['status'] == 'open' ? 'Active' : 'Closed',
+                                style: TextStyle(
+                                  color: job['status'] == 'open' ? mediumSeaGreen : Colors.grey,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: paleGreen.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.people_outline,
+                                color: mediumSeaGreen,
+                                size: 14,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${job['applications_count'] ?? 0} applications',
+                                style: TextStyle(
+                                  color: mediumSeaGreen,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      job['location'] ?? 'Location not specified',
-                      style: TextStyle(
-                        color: darkTeal.withValues(alpha: 0.7),
-                        fontSize: 11,
+                    
+                    const SizedBox(height: 16),
+                    
+                    // Salary
+                    if (job['salary_min'] != null || job['salary_max'] != null) ...[
+                      _buildDetailRow(
+                        'Salary Range',
+                        _formatSalary(job['salary_min'], job['salary_max']),
+                        Icons.payments_outlined,
                       ),
+                      const SizedBox(height: 12),
+                    ],
+                    
+                    // Experience level
+                    if (job['experience_level'] != null && job['experience_level'].toString().isNotEmpty) ...[
+                      _buildDetailRow(
+                        'Experience Level',
+                        job['experience_level'],
+                        Icons.school_outlined,
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    
+                    // Job type
+                    _buildDetailRow(
+                      'Job Type',
+                      _formatJobType(job['type']),
+                      Icons.work_outline,
+                    ),
+                    
+                    const SizedBox(height: 16),
+                    
+                    // Description
+                    const Text(
+                      'Job Description',
+                      style: TextStyle(
+                        color: darkTeal,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: lightMint.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: paleGreen.withValues(alpha: 0.3),
+                          width: 1,
+                        ),
+                      ),
+                      child: Text(
+                        job['description'] ?? 'No description available',
+                        style: TextStyle(
+                          color: darkTeal.withValues(alpha: 0.8),
+                          fontSize: 11,
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 20),
+                    
+                    // Action buttons
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              _navigateToEditJob(job);
+                            },
+                            icon: const Icon(Icons.edit_outlined, size: 16),
+                            label: const Text(
+                              'Edit Job',
+                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: mediumSeaGreen,
+                              side: BorderSide(color: mediumSeaGreen),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              _navigateToApplications(job);
+                            },
+                            icon: const Icon(Icons.people_outline, size: 16),
+                            label: const Text(
+                              'Applications',
+                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: mediumSeaGreen,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              elevation: 0,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: job['status'] == 'open' 
-                    ? mediumSeaGreen.withValues(alpha: 0.1)
-                    : Colors.grey.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  job['status'] == 'open' ? 'Active' : 'Closed',
-                  style: TextStyle(
-                    color: job['status'] == 'open' ? mediumSeaGreen : Colors.grey,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value, IconData icon) {
+    return Row(
+      children: [
+        Icon(
+          icon,
+          color: mediumSeaGreen,
+          size: 16,
+        ),
+        const SizedBox(width: 8),
+        Text(
+          '$label: ',
+          style: TextStyle(
+            color: darkTeal.withValues(alpha: 0.7),
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
           ),
-          
-          const SizedBox(height: 8),
-          
-          // Application count
-          Row(
-            children: [
-              Icon(
-                Icons.people_outline,
-                color: mediumSeaGreen,
-                size: 14,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                '$applicationsCount application${applicationsCount == 1 ? '' : 's'}',
-                style: TextStyle(
-                  color: mediumSeaGreen,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(
+              color: darkTeal,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-        ],
+        ),
+      ],
+    );
+  }
+
+  String _formatJobType(String? type) {
+    if (type == null) return 'Full Time';
+    
+    switch (type) {
+      case 'full_time':
+        return 'Full Time';
+      case 'part_time':
+        return 'Part Time';
+      case 'contract':
+        return 'Contract';
+      case 'temporary':
+        return 'Temporary';
+      case 'internship':
+        return 'Internship';
+      case 'remote':
+        return 'Remote';
+      default:
+        return type.split('_').map((word) => 
+          word[0].toUpperCase() + word.substring(1)
+        ).join(' ');
+    }
+  }
+
+  void _navigateToEditJob(Map<String, dynamic> job) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => EditJobScreen(job: job),
+      ),
+    );
+    
+    if (result == true) {
+      // Reload profile data after editing
+      await forceRefreshProfileData();
+    }
+  }
+
+  void _navigateToApplications(Map<String, dynamic> job) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ApplicationsScreen(job: job),
       ),
     );
   }
@@ -1058,6 +1621,112 @@ class _EmployerProfileScreenState extends State<EmployerProfileScreen> with Tick
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  void _showAllJobsModal() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.85,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(24),
+            topRight: Radius.circular(24),
+          ),
+        ),
+        child: Column(
+          children: [
+            // Handle
+            Container(
+              margin: const EdgeInsets.only(top: 12),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: darkTeal.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            
+            // Header
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: mediumSeaGreen.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.work_outline,
+                      color: mediumSeaGreen,
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'All Job Postings',
+                          style: TextStyle(
+                            color: darkTeal,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        Text(
+                          '${_jobs.length} total jobs',
+                          style: TextStyle(
+                            color: darkTeal.withValues(alpha: 0.6),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: darkTeal.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(
+                        Icons.close,
+                        color: darkTeal,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            // Jobs list
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                itemCount: _jobs.length,
+                itemBuilder: (context, index) {
+                  final job = _jobs[index];
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _buildJobCard(job),
+                  );
+                },
+              ),
+            ),
+          ],
         ),
       ),
     );

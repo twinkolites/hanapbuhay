@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">HanapBuhay</string>
+    
+    <!-- Zego Log Filtering -->
+    <string name="zego_log_level">WARN</string>
+    <string name="zego_enable_console_log">false</string>
+    <string name="zego_enable_file_log">false</string>
+</resources>

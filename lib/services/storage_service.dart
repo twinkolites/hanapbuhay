@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:file_picker/file_picker.dart';
+import 'admin_service.dart';
 
 /// Service for handling file uploads to Supabase Storage
 class StorageService {
@@ -56,6 +57,13 @@ class StorageService {
             .getPublicUrl(filePath);
 
         print('📁 StorageService: Public URL: $publicUrl');
+        try {
+          await AdminService.logEvent(
+            actionType: 'document_uploaded',
+            targetUserId: userId,
+            data: {'type': documentType, 'url': publicUrl},
+          );
+        } catch (_) {}
         return publicUrl;
       }
 
@@ -64,6 +72,92 @@ class StorageService {
     } catch (e) {
       print('📁 StorageService: Error uploading file: $e');
       rethrow;
+    }
+  }
+
+  /// Upload a company logo image and return public URL
+  static Future<String?> uploadCompanyLogo({
+    required String ownerId,
+    required PlatformFile file,
+  }) async {
+    try {
+      final validationError = validateFile(file);
+      if (validationError != null) {
+        throw Exception(validationError);
+      }
+
+      final fileName = '${DateTime.now().millisecondsSinceEpoch}_logo_${file.name}';
+      final filePath = '$ownerId/company/logo/$fileName';
+
+      await _supabase.storage
+          .from('employer-documents')
+          .uploadBinary(
+            filePath,
+            file.bytes!,
+            fileOptions: const FileOptions(
+              cacheControl: '3600',
+              upsert: true,
+            ),
+          );
+
+      final publicUrl = _supabase.storage
+          .from('employer-documents')
+          .getPublicUrl(filePath);
+
+      try {
+        await AdminService.logEvent(
+          actionType: 'document_uploaded',
+          targetUserId: ownerId,
+          data: {'type': 'company_logo', 'url': publicUrl},
+        );
+      } catch (_) {}
+      return publicUrl;
+    } catch (e) {
+      print('StorageService: Error uploading company logo: $e');
+      return null;
+    }
+  }
+
+  /// Upload a company profile/cover image and return public URL
+  static Future<String?> uploadCompanyProfileImage({
+    required String ownerId,
+    required PlatformFile file,
+  }) async {
+    try {
+      final validationError = validateFile(file);
+      if (validationError != null) {
+        throw Exception(validationError);
+      }
+
+      final fileName = '${DateTime.now().millisecondsSinceEpoch}_profile_${file.name}';
+      final filePath = '$ownerId/company/profile/$fileName';
+
+      await _supabase.storage
+          .from('employer-documents')
+          .uploadBinary(
+            filePath,
+            file.bytes!,
+            fileOptions: const FileOptions(
+              cacheControl: '3600',
+              upsert: true,
+            ),
+          );
+
+      final publicUrl = _supabase.storage
+          .from('employer-documents')
+          .getPublicUrl(filePath);
+
+      try {
+        await AdminService.logEvent(
+          actionType: 'document_uploaded',
+          targetUserId: ownerId,
+          data: {'type': 'company_profile', 'url': publicUrl},
+        );
+      } catch (_) {}
+      return publicUrl;
+    } catch (e) {
+      print('StorageService: Error uploading company profile image: $e');
+      return null;
     }
   }
 
@@ -90,7 +184,12 @@ class StorageService {
       await _supabase.storage
           .from('employer-documents')
           .remove([filePath]);
-
+      try {
+        await AdminService.logEvent(
+          actionType: 'document_deleted',
+          data: {'file_path': filePath},
+        );
+      } catch (_) {}
       return true;
     } catch (e) {
       print('Error deleting file: $e');
@@ -115,13 +214,32 @@ class StorageService {
             ),
           );
 
-      return response.map((file) => {
+      // Map base objects
+      final docs = response.map((file) => {
         'name': file.name,
         'path': '$prefix${file.name}',
         'size': file.metadata?['size'],
         'created_at': file.createdAt,
         'updated_at': file.updatedAt,
       }).toList();
+
+      // Fallback: for items with missing size, try downloading to determine byte length.
+      // This is a last resort used only when metadata.size is unavailable from the Storage API.
+      for (final doc in docs) {
+        if (doc['size'] == null) {
+          try {
+            final bytes = await _supabase.storage
+                .from('employer-documents')
+                .download(doc['path'] as String);
+            doc['size'] = bytes.lengthInBytes;
+          } catch (_) {
+            // leave size as null if download fails (e.g., permissions)
+            doc['size'] = 0;
+          }
+        }
+      }
+
+      return docs;
     } catch (e) {
       print('Error getting user documents: $e');
       return [];

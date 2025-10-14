@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import '../../models/employer_registration_data.dart';
 import '../../services/input_security_service.dart';
 import '../../utils/safe_snackbar.dart';
+import '../../utils/age_validation_utils.dart';
 
 class EmployerRegistrationPersonalInfoScreen extends StatefulWidget {
   final EmployerRegistrationData registrationData;
@@ -35,8 +36,6 @@ class _EmployerRegistrationPersonalInfoScreenState extends State<EmployerRegistr
   DateTime? _selectedBirthday;
 
   // Color palette
-  static const Color lightMint = Color(0xFFEAF9E7);
-  static const Color paleGreen = Color(0xFFC0E6BA);
   static const Color mediumSeaGreen = Color(0xFF4CA771);
   static const Color darkTeal = Color(0xFF013237);
 
@@ -85,9 +84,9 @@ class _EmployerRegistrationPersonalInfoScreenState extends State<EmployerRegistr
   Future<void> _selectBirthday() async {
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: _selectedBirthday ?? DateTime.now().subtract(const Duration(days: 365 * 25)),
+      initialDate: _selectedBirthday ?? DateTime(DateTime.now().year - 25, DateTime.now().month, DateTime.now().day),
       firstDate: DateTime(1900),
-      lastDate: DateTime.now().subtract(const Duration(days: 365 * 18)), // Must be at least 18
+      lastDate: AgeValidationUtils.getMinimumBirthDate(), // Must be at least 18 years old
     );
 
     if (picked != null && picked != _selectedBirthday && mounted) {

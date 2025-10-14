@@ -5,6 +5,7 @@ import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
+import 'onesignal_notification_service.dart';
 
 class AIScreeningService {
   static final SupabaseClient _supabase = Supabase.instance.client;
@@ -421,8 +422,21 @@ class AIScreeningService {
 
       final job = application['jobs'];
       final company = job['companies'];
+      final applicant = application['profiles'];
       
-      // Create notification for employer
+      // Send OneSignal notifications
+      await OneSignalNotificationService.sendAIScreeningCompletedNotification(
+        applicantId: application['applicant_id'],
+        employerId: company['owner_id'],
+        jobId: job['id'],
+        jobTitle: job['title'],
+        applicantName: applicant['full_name'] ?? 'Unknown',
+        score: screeningResult['overall_score']?.toDouble() ?? 0.0,
+        recommendation: screeningResult['reasoning'] ?? 'Analysis completed',
+        applicationId: applicationId,
+      );
+
+      // Also create database notification for consistency
       await _supabase
           .from('notifications')
           .insert({
@@ -431,12 +445,14 @@ class AIScreeningService {
             'payload': {
               'application_id': applicationId,
               'job_title': job['title'],
-              'applicant_name': application['profiles']['full_name'],
+              'applicant_name': applicant['full_name'],
               'ai_score': screeningResult['overall_score'],
-              'recommendation': screeningResult['recommendation'],
+              'recommendation': screeningResult['reasoning'],
             },
             'is_read': false,
           });
+
+      debugPrint('✅ AI screening notifications sent successfully');
     } catch (e) {
       debugPrint('❌ Error sending screening notification: $e');
     }

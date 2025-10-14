@@ -37,12 +37,14 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
   // Animation controllers
   late AnimationController _typingAnimationController;
   late AnimationController _messageAnimationController;
+  late AnimationController _slideAnimationController;
+  late AnimationController _scaleAnimationController;
   
   // Map to track which messages have their timestamps visible
-  Map<String, bool> _showTimestamps = {};
+  final Map<String, bool> _showTimestamps = {};
   
   // Map to track sent messages that should auto-progress to delivered
-  Map<String, Timer> _sentMessageTimers = {};
+  final Map<String, Timer> _sentMessageTimers = {};
 
   // Color palette
   static const Color lightMint = Color(0xFFEAF9E7);
@@ -64,6 +66,14 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
       duration: const Duration(milliseconds: 300),
       vsync: this,
     );
+    _slideAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 400),
+      vsync: this,
+    );
+    _scaleAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 250),
+      vsync: this,
+    );
     
     _setupScrollListener();
     _setupRealtimeSubscription();
@@ -82,6 +92,8 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
     _scrollController.dispose();
     _typingAnimationController.dispose();
     _messageAnimationController.dispose();
+    _slideAnimationController.dispose();
+    _scaleAnimationController.dispose();
     
     // Cancel all pending timers
     for (final timer in _sentMessageTimers.values) {
@@ -95,8 +107,10 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
 
   Future<void> _loadMessages() async {
     try {
+      debugPrint('🔄 Loading messages for chat: ${widget.chatId}');
       setState(() => _isLoading = true);
       final messages = await ChatService.getInitialMessages(widget.chatId);
+      debugPrint('📥 Loaded ${messages.length} messages');
       
       if (mounted) {
         setState(() {
@@ -106,6 +120,8 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
           _isLoading = false;
           _hasMoreMessages = messages.length >= 20;
         });
+        
+        debugPrint('✅ Messages set in state: ${_messages.length}');
         
         // Force a complete rebuild of the ListView
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -122,6 +138,7 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
         });
       }
     } catch (e) {
+      debugPrint('❌ Error loading messages: $e');
       if (mounted) {
         setState(() => _isLoading = false);
         _showErrorSnackBar('Failed to load messages: $e');
@@ -158,8 +175,8 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
 
   void _setupScrollListener() {
     _scrollController.addListener(() {
-      // Check when we're near the top (position 0) to load more messages
-      if (_scrollController.position.pixels <= 100 && _hasMoreMessages && !_isLoadingMore) {
+      // In reverse ListView, check when we're near the bottom (maxScrollExtent) to load more messages
+      if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 100 && _hasMoreMessages && !_isLoadingMore) {
         _loadMoreMessages();
       }
     });
@@ -177,6 +194,11 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
           // Add new message in correct chronological position
           _insertMessageInOrder(message);
           _messageAnimationController.forward();
+          
+          // Trigger slide animation for new message
+          _slideAnimationController.reset();
+          _slideAnimationController.forward();
+          
           _scrollToBottom();
           
           // Handle status progression for user's own messages
@@ -240,9 +262,9 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
         // Add a small delay to ensure ListView is fully built
         Future.delayed(const Duration(milliseconds: 50), () {
           if (_scrollController.hasClients) {
-            // Scroll to the actual bottom (maxScrollExtent)
+            // In reverse ListView, scroll to position 0.0 to show the latest messages
             _scrollController.animateTo(
-              _scrollController.position.maxScrollExtent,
+              0.0,
               duration: const Duration(milliseconds: 300),
               curve: Curves.easeOut,
             );
@@ -254,8 +276,8 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
 
   void _scrollToBottomImmediately() {
     if (_scrollController.hasClients) {
-      // Scroll to the actual bottom (maxScrollExtent)
-      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      // In reverse ListView, jump to position 0.0 to show the latest messages
+      _scrollController.jumpTo(0.0);
     }
   }
 
@@ -270,21 +292,27 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: lightMint,
-      appBar: _buildAppBar(),
-      body: Column(
-        children: [
-          _buildJobApplicationInfo(),
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: _loadMessages,
-              color: mediumSeaGreen,
-              child: _buildChatMessages(),
+    return GestureDetector(
+      onTap: () {
+        FocusScope.of(context).unfocus();
+      },
+      child: Scaffold(
+        backgroundColor: lightMint,
+        resizeToAvoidBottomInset: true,
+        appBar: _buildAppBar(),
+        body: Column(
+          children: [
+            _buildJobApplicationInfo(),
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: _loadMessages,
+                color: mediumSeaGreen,
+                child: _buildChatMessages(),
+              ),
             ),
-          ),
-          _buildMessageInput(),
-        ],
+            _buildMessageInput(),
+          ],
+        ),
       ),
     );
   }
@@ -507,6 +535,8 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
   }
 
   Widget _buildChatMessages() {
+    debugPrint('🎨 Building chat messages - Loading: $_isLoading, Messages: ${_messages.length}');
+    
     // Show loading state
     if (_isLoading && _messages.isEmpty) {
       return Center(
@@ -607,14 +637,16 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
       child: ListView.builder(
         key: ValueKey('messages_${_messages.length}_${DateTime.now().millisecondsSinceEpoch}'), // Force rebuild when messages change
         controller: _scrollController,
+        reverse: true, // This makes the ListView start from the bottom
         padding: const EdgeInsets.only(
           left: 16,
           right: 8, // Reduce right padding so bubbles can extend closer to edge
-          top: 24, // Increased top padding to push bubbles down
-          bottom: 4, // Further reduced bottom padding to minimize gap
+          top: 4, // Reduced top padding since we're now reversed
+          bottom: 24, // Increased bottom padding since this is now the "top" of the reversed list
         ),
         itemCount: _messages.length + (_isOtherUserTyping ? 1 : 0) + (_isLoadingMore ? 1 : 0),
         itemBuilder: (context, index) {
+          // In reverse ListView, index 0 is the last message
           // Loading more indicator at the top (which is now at the bottom due to reverse)
           if (_isLoadingMore && index == 0) {
             return _buildLoadingMoreIndicator();
@@ -623,15 +655,18 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
           // Adjust message index if loading more
           final messageIndex = _isLoadingMore ? index - 1 : index;
           
-          // Typing indicator
+          // Typing indicator (should appear at the very bottom, which is index 0 in reverse)
           if (_isOtherUserTyping && messageIndex == _messages.length) {
             return _buildTypingIndicator();
           }
           
-          // Message bubble
+          // Message bubble with animation
           if (messageIndex < _messages.length) {
-            final message = _messages[messageIndex];
-            return _buildMessageBubble(message, messageIndex);
+            // In reverse ListView, we need to reverse the message index to get the correct message
+            final reversedIndex = _messages.length - 1 - messageIndex;
+            final message = _messages[reversedIndex];
+            debugPrint('🎯 ListView building message at index $messageIndex (reversed: $reversedIndex): ${message.content}');
+            return _buildAnimatedMessageBubble(message, reversedIndex);
           }
           
           return const SizedBox.shrink();
@@ -698,13 +733,20 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
     }
   }
 
+  Widget _buildAnimatedMessageBubble(ChatMessage message, int index) {
+    final currentUser = _supabase.auth.currentUser;
+    final isFromEmployer = message.senderId != currentUser?.id;
+    final isNewMessage = index >= _messages.length - 3; // Animate last 3 messages
+    
+    debugPrint('🎬 Animation bubble - Index: $index, Message: ${message.content}, FromEmployer: $isFromEmployer, IsNew: $isNewMessage');
+    
+    // Always show message bubble without complex animations for now
+    return _buildMessageBubble(message, index);
+  }
+
   Widget _buildMessageBubble(ChatMessage message, int index) {
     final currentUser = _supabase.auth.currentUser;
     final isFromEmployer = message.senderId != currentUser?.id;
-    
-    // Show avatar with the latest message from this sender (chronologically last)
-    final showAvatar = isFromEmployer && 
-        (index == _messages.length - 1 || _messages[index + 1].senderId != message.senderId);
     
     // Show name with the first message from this sender (chronologically first)
     final showName = isFromEmployer && 
@@ -717,40 +759,6 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
         children: [
           if (isFromEmployer) ...[
             // LEFT SIDE - Employer messages
-            if (showAvatar) ...[
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [mediumSeaGreen, Color(0xFF2E7D4E)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(18),
-                  boxShadow: [
-                    BoxShadow(
-                      color: mediumSeaGreen.withValues(alpha: 0.2),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Center(
-                  child: Text(
-                    message.senderAvatar ?? message.senderName?.substring(0, 1).toUpperCase() ?? 'E',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-            ] else ...[
-              const SizedBox(width: 48),
-            ],
             
             // Employer message content
             Expanded(
@@ -895,7 +903,6 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
                 ],
               ),
             ),
-            const SizedBox(width: 0), // Minimal spacing for edge
           ],
         ],
       ),
@@ -918,7 +925,7 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
       child: SafeArea(
         child: Row(
           children: [
-            // Attachment button
+            // Calendar button (view-only for applicants)
             Container(
               width: 44,
               height: 44,
@@ -932,10 +939,10 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
               ),
               child: IconButton(
                 onPressed: () {
-                  // TODO: Implement attachment
+                  _showCalendarViewOptions();
                 },
                 icon: Icon(
-                  Icons.attach_file_rounded,
+                  Icons.calendar_today_rounded,
                   color: mediumSeaGreen,
                   size: 20,
                 ),
@@ -975,45 +982,58 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
               ),
             ),
             const SizedBox(width: 12),
-            // Send button with enhanced design
-            GestureDetector(
-              onTap: _isSending ? null : _sendMessage,
-              child: Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  gradient: _isSending 
-                      ? null
-                      : const LinearGradient(
-                          colors: [mediumSeaGreen, Color(0xFF2E7D4E)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                  color: _isSending ? mediumSeaGreen.withValues(alpha: 0.5) : null,
-                  shape: BoxShape.circle,
-                  boxShadow: _isSending ? null : [
-                    BoxShadow(
-                      color: mediumSeaGreen.withValues(alpha: 0.3),
-                      blurRadius: 8,
-                      offset: const Offset(0, 3),
-                    ),
-                  ],
-                ),
-                child: _isSending
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.5,
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                        ),
-                      )
-                    : const Icon(
-                        Icons.send_rounded,
-                        color: Colors.white,
-                        size: 22,
+            // Send button with enhanced design and animation
+            AnimatedBuilder(
+              animation: _scaleAnimationController,
+              builder: (context, child) {
+                return Transform.scale(
+                  scale: _isSending ? 0.95 : 1.0,
+                  child: GestureDetector(
+                    onTap: _isSending ? null : () {
+                      _scaleAnimationController.forward().then((_) {
+                        _scaleAnimationController.reverse();
+                      });
+                      _sendMessage();
+                    },
+                    child: Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        gradient: _isSending 
+                            ? null
+                            : const LinearGradient(
+                                colors: [mediumSeaGreen, Color(0xFF2E7D4E)],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                        color: _isSending ? mediumSeaGreen.withValues(alpha: 0.5) : null,
+                        shape: BoxShape.circle,
+                        boxShadow: _isSending ? null : [
+                          BoxShadow(
+                            color: mediumSeaGreen.withValues(alpha: 0.3),
+                            blurRadius: 8,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
                       ),
-              ),
+                      child: _isSending
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.5,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            )
+                          : const Icon(
+                              Icons.send_rounded,
+                              color: Colors.white,
+                              size: 22,
+                            ),
+                    ),
+                  ),
+                );
+              },
             ),
           ],
         ),
@@ -1131,8 +1151,6 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
     }
   }
 
-
-
   Widget _buildTypingIndicator() {
     if (!_isOtherUserTyping) return const SizedBox.shrink();
     
@@ -1198,6 +1216,107 @@ class _ApplicantChatScreenState extends State<ApplicantChatScreen> with TickerPr
           ),
         ],
       ),
+    );
+  }
+
+  void _showCalendarViewOptions() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              margin: const EdgeInsets.only(top: 8),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: darkTeal.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'Meeting Calendar',
+              style: TextStyle(
+                color: darkTeal,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Text(
+                'View your scheduled meetings with employers',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: darkTeal.withValues(alpha: 0.6),
+                  fontSize: 12,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            _buildCalendarViewOption(
+              'View Calendar',
+              Icons.calendar_today_rounded,
+              'See all your scheduled meetings',
+              () {
+                Navigator.pop(context);
+                Navigator.pushNamed(context, '/applicant-calendar');
+              },
+            ),
+            _buildCalendarViewOption(
+              'Meeting Requests',
+              Icons.event_available_rounded,
+              'View pending meeting requests',
+              () {
+                Navigator.pop(context);
+                Navigator.pushNamed(context, '/applicant-calendar');
+              },
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCalendarViewOption(String title, IconData icon, String subtitle, VoidCallback onTap) {
+    return ListTile(
+      leading: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: mediumSeaGreen.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(
+          icon,
+          color: mediumSeaGreen,
+          size: 20,
+        ),
+      ),
+      title: Text(
+        title,
+        style: const TextStyle(
+          color: darkTeal,
+          fontSize: 16,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: TextStyle(
+          color: darkTeal.withValues(alpha: 0.7),
+          fontSize: 12,
+        ),
+      ),
+      onTap: onTap,
     );
   }
 }

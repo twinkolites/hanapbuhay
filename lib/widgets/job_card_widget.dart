@@ -1,17 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../screens/applicant/apply_job_screen.dart';
+import '../screens/applicant/job_details_screen.dart';
 
 class JobCardWidget extends StatefulWidget {
   final Map<String, dynamic> job;
   final VoidCallback? onBookmarkTap;
   final VoidCallback? onApplyTap;
+  final bool isSaved;
+  final bool isPending;
 
   const JobCardWidget({
     super.key,
     required this.job,
     this.onBookmarkTap,
     this.onApplyTap,
+    this.isSaved = false,
+    this.isPending = false,
   });
 
   @override
@@ -155,19 +160,18 @@ class _JobCardWidgetState extends State<JobCardWidget> {
                 ),
               ),
               
-              // Bookmark button
+              // Optimized bookmark button
               GestureDetector(
                 onTap: widget.onBookmarkTap,
                 child: Container(
                   padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
+                  decoration: const BoxDecoration(
                     color: lightMint,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.all(Radius.circular(8)),
                   ),
-                  child: Icon(
-                    Icons.bookmark_border,
-                    color: mediumSeaGreen,
-                    size: 18,
+                  child: _BookmarkIcon(
+                    isSaved: widget.isSaved,
+                    isPending: widget.isPending,
                   ),
                 ),
               ),
@@ -206,32 +210,12 @@ class _JobCardWidgetState extends State<JobCardWidget> {
           
           const SizedBox(height: 12),
           
-          // Tags
-          Row(
+          // Tags - Display multiple job types
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              Container(
-                margin: const EdgeInsets.only(right: 8),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: mediumSeaGreen.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: mediumSeaGreen.withValues(alpha: 0.2),
-                    width: 1,
-                  ),
-                ),
-                child: Text(
-                  _formatJobTypeDisplay(widget.job['type'] ?? 'full_time'),
-                  style: TextStyle(
-                    color: mediumSeaGreen,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
+              ..._buildJobTypeTags(),
               if (widget.job['experience_level'] != null)
                 Container(
                   padding: const EdgeInsets.symmetric(
@@ -260,10 +244,41 @@ class _JobCardWidgetState extends State<JobCardWidget> {
           
           const SizedBox(height: 16),
           
-          // Apply button with application status
-          SizedBox(
-            width: double.infinity,
-            child: _buildApplyButton(),
+          // Action buttons row: View Details + Apply/Status
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => JobDetailsScreen(job: widget.job),
+                      ),
+                    );
+                  },
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: darkTeal,
+                    side: BorderSide(color: darkTeal.withValues(alpha: 0.3), width: 1.2),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: const Text(
+                    'View Details',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildApplyButton(),
+              ),
+            ],
           ),
         ],
       ),
@@ -473,6 +488,77 @@ class _JobCardWidgetState extends State<JobCardWidget> {
     }
   }
 
+  List<Widget> _buildJobTypeTags() {
+    final jobTypes = (widget.job['job_types'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final primaryJobType = widget.job['primary_job_type'] as Map<String, dynamic>?;
+    
+    // If no job types from new system, fall back to old single type
+    if (jobTypes.isEmpty && widget.job['type'] != null) {
+      return [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: mediumSeaGreen.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: mediumSeaGreen.withValues(alpha: 0.2),
+              width: 1,
+            ),
+          ),
+          child: Text(
+            _formatJobTypeDisplay(widget.job['type']),
+            style: TextStyle(
+              color: mediumSeaGreen,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ];
+    }
+    
+    // Display up to 2 job types with primary highlighted
+    return jobTypes.take(2).map((jobType) {
+      final isPrimary = primaryJobType != null && jobType['id'] == primaryJobType['id'];
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: isPrimary 
+              ? mediumSeaGreen.withValues(alpha: 0.15)
+              : mediumSeaGreen.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isPrimary
+                ? mediumSeaGreen.withValues(alpha: 0.3)
+                : mediumSeaGreen.withValues(alpha: 0.15),
+            width: isPrimary ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (isPrimary) ...[
+              Icon(
+                Icons.star,
+                color: mediumSeaGreen,
+                size: 11,
+              ),
+              const SizedBox(width: 4),
+            ],
+            Text(
+              jobType['display_name'] ?? jobType['name'] ?? '',
+              style: TextStyle(
+                color: mediumSeaGreen,
+                fontSize: 12,
+                fontWeight: isPrimary ? FontWeight.w700 : FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      );
+    }).toList();
+  }
+
   String _formatJobTypeDisplay(String type) {
     switch (type) {
       case 'full_time':
@@ -509,5 +595,36 @@ class _JobCardWidgetState extends State<JobCardWidget> {
           word[0].toUpperCase() + word.substring(1)
         ).join(' ');
     }
+  }
+}
+
+// Optimized const widget for bookmark icon to reduce rebuilds
+class _BookmarkIcon extends StatelessWidget {
+  final bool isSaved;
+  final bool isPending;
+  
+  const _BookmarkIcon({
+    required this.isSaved,
+    required this.isPending,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (isPending) {
+      return const SizedBox(
+        width: 18,
+        height: 18,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4CA771)),
+        ),
+      );
+    }
+    
+    return Icon(
+      isSaved ? Icons.bookmark : Icons.bookmark_border,
+      color: const Color(0xFF4CA771),
+      size: 18,
+    );
   }
 }

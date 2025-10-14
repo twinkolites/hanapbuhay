@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:file_picker/file_picker.dart';
 import 'profile_preview_screen.dart';
+import '../../services/onesignal_notification_service.dart';
 
 class ApplicationProfileScreen extends StatefulWidget {
   final Map<String, dynamic>? applicationProfile;
@@ -227,8 +228,8 @@ class _ApplicationProfileScreenState extends State<ApplicationProfileScreen> wit
         'portfolio_url': _portfolioController.text.trim(),
         'github_url': _githubController.text.trim(),
         'availability': _availabilityController.text.trim(),
-        'salary_expectation_min': int.tryParse(_salaryMinController.text) ?? null,
-        'salary_expectation_max': int.tryParse(_salaryMaxController.text) ?? null,
+        'salary_expectation_min': int.tryParse(_salaryMinController.text),
+        'salary_expectation_max': int.tryParse(_salaryMaxController.text),
         'resume_url': _resumeUrl,
         'resume_filename': _resumeFilename,
         'profile_completeness': _profileCompleteness,
@@ -261,6 +262,21 @@ class _ApplicationProfileScreenState extends State<ApplicationProfileScreen> wit
           ),
         );
 
+        // Send profile update notification
+        try {
+          await OneSignalNotificationService.sendProfileUpdateNotification(
+            applicantId: user.id,
+            applicantName: _fullNameController.text.trim(),
+            profileCompleteness: _profileCompleteness,
+            updatedFields: _getUpdatedFields(),
+          );
+
+          debugPrint('✅ Profile update notification sent successfully');
+        } catch (notificationError) {
+          debugPrint('❌ Error sending profile update notification: $notificationError');
+          // Don't fail the profile save if notifications fail
+        }
+
         widget.onProfileUpdated?.call();
         Navigator.pop(context);
       }
@@ -284,6 +300,33 @@ class _ApplicationProfileScreenState extends State<ApplicationProfileScreen> wit
         });
       }
     }
+  }
+
+  List<String> _getUpdatedFields() {
+    final updatedFields = <String>[];
+    
+    if (_fullNameController.text.isNotEmpty) updatedFields.add('full_name');
+    if (_emailController.text.isNotEmpty) updatedFields.add('email');
+    if (_phoneController.text.isNotEmpty) updatedFields.add('phone_number');
+    if (_locationController.text.isNotEmpty) updatedFields.add('location');
+    if (_professionalSummaryController.text.isNotEmpty) updatedFields.add('professional_summary');
+    if (_currentPositionController.text.isNotEmpty) updatedFields.add('current_position');
+    if (_currentCompanyController.text.isNotEmpty) updatedFields.add('current_company');
+    if (_yearsExperienceController.text.isNotEmpty) updatedFields.add('years_of_experience');
+    if (_skills.isNotEmpty) updatedFields.add('skills');
+    if (_education.isNotEmpty) updatedFields.add('education');
+    if (_workExperience.isNotEmpty) updatedFields.add('work_experience');
+    if (_certifications.isNotEmpty) updatedFields.add('certifications');
+    if (_languages.isNotEmpty) updatedFields.add('languages');
+    if (_linkedinController.text.isNotEmpty) updatedFields.add('linkedin_url');
+    if (_portfolioController.text.isNotEmpty) updatedFields.add('portfolio_url');
+    if (_githubController.text.isNotEmpty) updatedFields.add('github_url');
+    if (_availabilityController.text.isNotEmpty) updatedFields.add('availability');
+    if (_salaryMinController.text.isNotEmpty) updatedFields.add('salary_expectation_min');
+    if (_salaryMaxController.text.isNotEmpty) updatedFields.add('salary_expectation_max');
+    if (_resumeUrl != null) updatedFields.add('resume');
+    
+    return updatedFields;
   }
 
   int _calculateCompleteness() {
@@ -656,7 +699,7 @@ class _ApplicationProfileScreenState extends State<ApplicationProfileScreen> wit
                       ],
                     ),
                   );
-                }).toList(),
+                }),
             ],
           ),
         ),
@@ -761,7 +804,7 @@ class _ApplicationProfileScreenState extends State<ApplicationProfileScreen> wit
                       ],
                     ),
                   );
-                }).toList(),
+                }),
             ],
           ),
         ),

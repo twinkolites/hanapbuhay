@@ -13,8 +13,7 @@ class _SystemAnalyticsScreenState extends State<SystemAnalyticsScreen> {
   bool _isLoading = true;
 
   // Color palette
-  static const Color lightMint = Color(0xFFEAF9E7);
-  static const Color paleGreen = Color(0xFFC0E6BA);
+  // Note: keep palette aligned across screens. Unused constants removed to satisfy lints.
   static const Color mediumSeaGreen = Color(0xFF4CA771);
   static const Color darkTeal = Color(0xFF013237);
 
@@ -48,6 +47,13 @@ class _SystemAnalyticsScreenState extends State<SystemAnalyticsScreen> {
         child: CircularProgressIndicator(color: mediumSeaGreen),
       );
     }
+
+    // Derived metrics from available schema data
+    final loginAttempts = _analytics['login_attempts'] as List? ?? [];
+
+    final totalLogins = loginAttempts.length;
+    final successLogins = loginAttempts.where((a) => a['success'] == true).length;
+    final successRate = totalLogins == 0 ? 0.0 : successLogins / totalLogins;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -110,20 +116,23 @@ class _SystemAnalyticsScreenState extends State<SystemAnalyticsScreen> {
               ),
             ],
           ),
-          
-          const SizedBox(height: 32),
-          
-          // User Growth Chart
-          Text(
-            'User Growth',
-            style: TextStyle(
-              color: darkTeal,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
+
+          const SizedBox(height: 12),
+          // Login Success Rate
+          Row(
+            children: [
+              Expanded(
+                child: _buildAnalyticsCard(
+                  title: 'Login Success Rate',
+                  value: '${(successRate * 100).toStringAsFixed(0)}%',
+                  icon: Icons.check_circle_outline,
+                  color: Colors.indigo,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(child: SizedBox()),
+            ],
           ),
-          const SizedBox(height: 16),
-          _buildUserGrowthChart(),
           
           const SizedBox(height: 32),
           
@@ -209,87 +218,6 @@ class _SystemAnalyticsScreenState extends State<SystemAnalyticsScreen> {
     );
   }
 
-  Widget _buildUserGrowthChart() {
-    final userGrowth = _analytics['user_growth'] as List? ?? [];
-    
-    if (userGrowth.isEmpty) {
-      return Container(
-        height: 200,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: darkTeal.withValues(alpha: 0.1),
-              blurRadius: 10,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.trending_up,
-                size: 48,
-                color: mediumSeaGreen.withValues(alpha: 0.5),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'No Data Available',
-                style: TextStyle(
-                  color: darkTeal.withValues(alpha: 0.7),
-                  fontSize: 16,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      height: 200,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: darkTeal.withValues(alpha: 0.1),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Users Over Time',
-            style: TextStyle(
-              color: darkTeal,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: Center(
-              child: Text(
-                'Chart visualization coming soon',
-                style: TextStyle(
-                  color: darkTeal.withValues(alpha: 0.7),
-                  fontSize: 14,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _buildRecentActivityList() {
     final loginAttempts = _analytics['login_attempts'] as List? ?? [];

@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import '../config/app_config.dart';
+import 'onesignal_notification_service.dart';
 
 class JobRecommendationService {
   static final SupabaseClient _supabase = Supabase.instance.client;
@@ -426,6 +427,41 @@ Return only the JSON array, no additional text:
       return true;
     } catch (e) {
       debugPrint('❌ Error updating job preferences: $e');
+      return false;
+    }
+  }
+
+  // Send notification for new job recommendations
+  static Future<bool> sendJobRecommendationNotifications({
+    required String userId,
+    required List<Map<String, dynamic>> recommendations,
+    int maxNotifications = 3,
+  }) async {
+    try {
+      if (recommendations.isEmpty) return false;
+
+      // Send notifications for top recommendations
+      final topRecommendations = recommendations.take(maxNotifications).toList();
+      
+      for (final job in topRecommendations) {
+        final matchScore = job['recommendation_score']?.toDouble() ?? 0.0;
+        
+        // Only send notification for high-quality matches (score > 0.7)
+        if (matchScore > 0.7) {
+          await OneSignalNotificationService.sendJobRecommendationNotification(
+            applicantId: userId,
+            jobId: job['id'],
+            jobTitle: job['title'],
+            companyName: job['companies']['name'] ?? 'Unknown Company',
+            matchScore: matchScore,
+          );
+        }
+      }
+
+      debugPrint('✅ Job recommendation notifications sent successfully');
+      return true;
+    } catch (e) {
+      debugPrint('❌ Error sending job recommendation notifications: $e');
       return false;
     }
   }

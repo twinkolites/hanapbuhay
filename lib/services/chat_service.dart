@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:async';
+import 'onesignal_notification_service.dart';
 
 enum MessageStatus {
   sending,
@@ -215,46 +216,56 @@ class ChatService {
 
       final List<ChatRoom> chats = [];
       for (final chatData in response as List) {
+        // Get the other user's ID by querying chat_members
+        final otherMemberResponse = await _supabase
+            .from('chat_members')
+            .select('user_id')
+            .eq('chat_id', chatData['chat_id'])
+            .neq('user_id', userId)
+            .single();
+        
+        final otherUserId = otherMemberResponse['user_id'] as String;
+
         // Create members list with current user and other member
         final members = [
           {
             'user_id': userId,
             'chat_id': chatData['chat_id'],
-            'joined_at': chatData['chat_created_at'],
-            'last_read_at': chatData['user_last_read_at'],
+            'joined_at': DateTime.now().toIso8601String(),
+            'last_read_at': DateTime.now().toIso8601String(),
             'is_active': true,
             'profiles': {
               'id': userId,
-              'full_name': 'Current User', // This will be overridden by actual profile data
+              'full_name': 'Current User',
               'avatar_url': null,
-              'role': 'applicant', // This will be overridden by actual profile data
+              'role': 'applicant',
             },
           },
           {
-            'user_id': chatData['other_member_id'],
+            'user_id': otherUserId,
             'chat_id': chatData['chat_id'],
-            'joined_at': chatData['chat_created_at'],
-            'last_read_at': chatData['user_last_read_at'],
+            'joined_at': DateTime.now().toIso8601String(),
+            'last_read_at': DateTime.now().toIso8601String(),
             'is_active': true,
             'profiles': {
-              'id': chatData['other_member_id'],
-              'full_name': chatData['other_member_name'],
-              'avatar_url': chatData['other_member_avatar_url'],
-              'role': chatData['other_member_role'],
+              'id': otherUserId,
+              'full_name': chatData['other_user_name'],
+              'avatar_url': null,
+              'role': 'employer',
             },
           },
         ];
 
         // Create last message data if exists
         Map<String, dynamic>? lastMessage;
-        if (chatData['last_message_id'] != null) {
+        if (chatData['last_message'] != null && chatData['last_message'] != 'No messages yet') {
           lastMessage = {
-            'id': chatData['last_message_id'],
-            'content': chatData['last_message_content'],
-            'sender_id': chatData['last_message_sender_id'],
-            'created_at': chatData['last_message_created_at'],
+            'id': 'temp_id',
+            'content': chatData['last_message'],
+            'sender_id': 'temp_sender',
+            'created_at': chatData['last_message_at']?.toString() ?? DateTime.now().toIso8601String(),
             'profiles': {
-              'full_name': chatData['last_message_sender_name'],
+              'full_name': chatData['other_user_name'],
               'avatar_url': null,
             },
           };
@@ -262,8 +273,8 @@ class ChatService {
 
         chats.add(ChatRoom.fromMap({
           'id': chatData['chat_id'],
-          'job_id': chatData['job_id'],
-          'created_at': chatData['chat_created_at'],
+          'job_id': null, // We don't have this in the new function
+          'created_at': DateTime.now().toIso8601String(), // We don't have this in the new function
           'last_message_at': chatData['last_message_at'],
           'is_active': true,
           'members': members,
@@ -288,6 +299,7 @@ class ChatService {
     int offset = 0,
   }) async {
     try {
+      debugPrint('🔄 ChatService: Getting messages for chat $chatId');
       // Use the optimized stored procedure
       final response = await _supabase.rpc('get_chat_messages', params: {
         'chat_uuid': chatId,
@@ -295,13 +307,21 @@ class ChatService {
         'offset_count': offset,
       });
 
-      final messages = (response as List)
-          .map((message) => ChatMessage.fromMap(message))
+      debugPrint('📥 ChatService: RPC response received: ${(response as List).length} messages');
+      debugPrint('📥 ChatService: First message data: ${(response).isNotEmpty ? (response).first : 'No messages'}');
+
+      final messages = (response)
+          .map((message) {
+            debugPrint('🔄 ChatService: Processing message: $message');
+            debugPrint('🔄 ChatService: Sender name: ${message['sender_name']}, Sender ID: ${message['sender_id']}');
+            return ChatMessage.fromMap(message);
+          })
           .toList();
 
+      debugPrint('✅ ChatService: Successfully processed ${messages.length} messages');
       return messages;
     } catch (e) {
-      debugPrint('Error in ChatService.getChatMessages: $e');
+      debugPrint('❌ Error in ChatService.getChatMessages: $e');
       return [];
     }
   }
@@ -378,6 +398,63 @@ class ChatService {
           debugPrint('Error updating to delivered status: $e');
         }
       });
+
+      // Send notification to recipient
+      try {
+        // Get chat details and recipient info
+        final chatDetails = await _supabase
+            .from('chats')
+            .select('''
+              id,
+              job_id,
+              jobs (
+                title
+              ),
+              chat_members (
+                user_id,
+                profiles (
+                  full_name
+                )
+              )
+            ''')
+            .eq('id', chatId)
+            .single();
+
+        // Find recipient (not the sender)
+        final chatMembers = chatDetails['chat_members'] as List;
+        final recipient = chatMembers.firstWhere(
+          (member) => member['user_id'] != user.id,
+          orElse: () => null,
+        );
+
+        if (recipient != null) {
+          final senderProfile = await _supabase
+              .from('profiles')
+              .select('full_name')
+              .eq('id', user.id)
+              .single();
+
+          final jobTitle = chatDetails['jobs']['title'] ?? 'Unknown Job';
+          final senderName = senderProfile['full_name'] ?? 'Unknown';
+          final messagePreview = content.length > 50 
+              ? '${content.substring(0, 50)}...' 
+              : content;
+
+          await OneSignalNotificationService.sendChatMessageNotification(
+            recipientId: recipient['user_id'],
+            senderId: user.id,
+            senderName: senderName,
+            messagePreview: messagePreview,
+            chatId: chatId,
+            jobTitle: jobTitle,
+          );
+
+          debugPrint('✅ Chat message notification sent successfully');
+        }
+      } catch (notificationError) {
+        debugPrint('❌ Error sending chat notification: $notificationError');
+        // Don't fail message sending if notifications fail
+      }
 
       return messageId;
     } catch (e) {

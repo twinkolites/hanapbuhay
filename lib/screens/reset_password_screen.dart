@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../main.dart';
 import 'login_screen.dart';
 import '../services/input_security_service.dart';
+import '../utils/age_validation_utils.dart';
 
 class ResetPasswordScreen extends StatefulWidget {
   final String accessToken;
@@ -117,11 +118,9 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen>
   Future<void> _selectBirthday() async {
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: DateTime.now().subtract(
-        const Duration(days: 6570),
-      ), // 18 years ago
+      initialDate: AgeValidationUtils.getMinimumBirthDate(), // Exactly 18 years ago
       firstDate: DateTime(1900),
-      lastDate: DateTime.now(),
+      lastDate: AgeValidationUtils.getMinimumBirthDate(), // Must be at least 18 years old
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(

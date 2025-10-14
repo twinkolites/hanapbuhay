@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../services/stay_signed_in_service.dart';
@@ -13,7 +11,12 @@ import 'admin/admin_dashboard_screen.dart';
 import 'employer/employer_registration_screen.dart';
 import 'employer/employer_application_status_screen.dart';
 import 'employer/email_verification_blocked_screen.dart';
+import 'account_suspended_screen.dart';
 import '../services/input_security_service.dart';
+import '../services/job_preferences_service.dart';
+import 'applicant/job_preferences_screen.dart';
+import '../services/onesignal_notification_service.dart';
+import '../utils/button_debouncer.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -23,10 +26,11 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, ButtonDebouncerMixin {
   bool _isPasswordVisible = false;
   bool _isCheckingSession = true;
   bool _staySignedIn = true;
+  bool _isSigningIn = false;
 
   // Error messages for real-time validation
   String? _emailError;
@@ -104,8 +108,8 @@ class _LoginScreenState extends State<LoginScreen>
 
     _animationController.forward();
 
-    // Load stay signed in preference and check session
-    _initializeSession();
+    // Load stay signed in preference (no session checking needed here)
+    _loadStaySignedInPreference();
   }
 
   @override
@@ -113,36 +117,23 @@ class _LoginScreenState extends State<LoginScreen>
     _animationController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
+    disposeDebouncer(); // Clean up debounce timers
     super.dispose();
   }
 
-  // Initialize session and load preferences
-  Future<void> _initializeSession() async {
+  // Load stay signed in preference (session checking is now handled in main splash screen)
+  Future<void> _loadStaySignedInPreference() async {
     try {
       // Load stay signed in preference
       final shouldStaySignedIn = await StaySignedInService.shouldStaySignedIn();
       if (mounted) {
         setState(() {
           _staySignedIn = shouldStaySignedIn;
+          _isCheckingSession = false; // Session checking is handled in main splash screen
         });
       }
-      
-      // Check if we have a valid session based on user preference
-      final hasValidSession = await StaySignedInService.validateSessionOnStartup();
-      
-      if (hasValidSession) {
-        // User has a valid session and wants to stay signed in
-        await _checkUserRoleAndNavigate();
-      } else {
-        // No valid session, user needs to log in
-        if (mounted) {
-          setState(() {
-            _isCheckingSession = false;
-          });
-        }
-      }
     } catch (e) {
-      print('Session initialization error: $e');
+      print('Error loading stay signed in preference: $e');
       if (mounted) {
         setState(() {
           _isCheckingSession = false;
@@ -183,6 +174,30 @@ class _LoginScreenState extends State<LoginScreen>
   }
 
   Future<void> _signIn() async {
+    // Check if already signing in to prevent multiple calls
+    if (_isSigningIn) return;
+    
+    // Debounce the sign-in action to prevent rapid clicks
+    debounce('sign_in', () async {
+      if (mounted) {
+        setState(() {
+          _isSigningIn = true;
+        });
+      }
+      
+      try {
+        await _performSignIn();
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isSigningIn = false;
+          });
+        }
+      }
+    });
+  }
+
+  Future<void> _performSignIn() async {
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
 
@@ -227,13 +242,35 @@ class _LoginScreenState extends State<LoginScreen>
           return;
         }
 
+        // Ensure device is registered with OneSignal immediately after login
+        try {
+          final userId = supabase.auth.currentUser?.id;
+          if (userId != null) {
+            await OneSignalNotificationService.subscribeUser(userId);
+          }
+        } catch (e) {
+          debugPrint('❌ OneSignal subscribe failed after login: $e');
+        }
+
         // Add a small delay to ensure any pending animations complete
         await Future.delayed(const Duration(milliseconds: 200));
         
         // Check user role and handle employer approval workflow
         await _checkUserRoleAndNavigate();
       } else if (mounted && authProvider.error != null) {
-        _showErrorDialog(authProvider.error!);
+        // Check if error is due to suspension
+        if (authProvider.error == 'Account suspended') {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => AccountSuspendedScreen(
+                reason: authProvider.suspensionReason,
+              ),
+            ),
+          );
+        } else {
+          _showErrorDialog(authProvider.error!);
+        }
       }
     } catch (e) {
       _showErrorDialog('An unexpected error occurred');
@@ -435,10 +472,8 @@ class _LoginScreenState extends State<LoginScreen>
         // Check employer verification status
         await _checkEmployerApprovalStatus(user.id);
       } else {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const HomeScreen()),
-        );
+        // For applicants, check if they need to set up job preferences
+        await _checkApplicantJobPreferences(user.id);
       }
     } catch (e) {
       debugPrint('❌ Error in _checkUserRoleAndNavigate: $e');
@@ -452,17 +487,57 @@ class _LoginScreenState extends State<LoginScreen>
     }
   }
 
+  // Check if applicant needs to set up job preferences
+  Future<void> _checkApplicantJobPreferences(String userId) async {
+    try {
+      // Check if user has completed job preferences setup
+      final hasCompletedPreferences = await JobPreferencesService.hasCompletedPreferences();
+      
+      if (!hasCompletedPreferences) {
+        // New applicant - redirect to job preferences setup
+        debugPrint('📝 New applicant detected - redirecting to job preferences');
+        if (!mounted) return;
+        
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const JobPreferencesScreen(),
+          ),
+        );
+        return;
+      }
+      
+      // Existing applicant with preferences set - go to home screen
+      debugPrint('✅ Applicant with completed preferences - going to home screen');
+      if (!mounted) return;
+      
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const HomeScreen()),
+      );
+    } catch (e) {
+      debugPrint('❌ Error checking applicant job preferences: $e');
+      // On error, default to home screen
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const HomeScreen()),
+      );
+    }
+  }
+
   // Check employer approval status and handle accordingly
   Future<void> _checkEmployerApprovalStatus(String userId) async {
     try {
-      // Check employer verification status
-      final verification = await supabase
+      // Check employer verification status - get the most recent record
+      final verificationList = await supabase
           .from('employer_verification')
-          .select('verification_status, rejection_reason, admin_notes')
+          .select('verification_status, rejection_reason, admin_notes, submitted_at')
           .eq('employer_id', userId)
-          .maybeSingle();
+          .order('submitted_at', ascending: false)
+          .limit(1);
       
-      if (verification == null) {
+      if (verificationList.isEmpty) {
         // No verification record found - navigate to status screen
         Navigator.pushReplacement(
           context,
@@ -471,6 +546,7 @@ class _LoginScreenState extends State<LoginScreen>
         return;
       }
       
+      final verification = verificationList.first;
       final status = verification['verification_status'] as String?;
       
       switch (status) {
@@ -492,7 +568,9 @@ class _LoginScreenState extends State<LoginScreen>
           break;
       }
     } catch (e) {
-      _showErrorDialog('Failed to check employer approval status.');
+      debugPrint('Error checking employer approval status: $e');
+      // Show more specific error message
+      _showErrorDialog('Failed to check employer approval status. Please try again.');
     }
   }
 
@@ -500,6 +578,7 @@ class _LoginScreenState extends State<LoginScreen>
     return Center(
       child: Column(
         children: [
+          // Regular user registration
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -512,10 +591,12 @@ class _LoginScreenState extends State<LoginScreen>
               ),
               GestureDetector(
                 onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const RegisterScreen()),
-                  );
+                  debounce('navigate_register', () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const RegisterScreen()),
+                    );
+                  });
                 },
                 child: Text(
                   'Create account',
@@ -529,38 +610,191 @@ class _LoginScreenState extends State<LoginScreen>
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
+          
+          // Divider with "OR" text
           Row(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(
-                "Are you an employer? ",
-                style: TextStyle(
-                  color: darkTeal.withValues(alpha: 0.7),
-                  fontSize: 11,
+              Expanded(
+                child: Divider(
+                  color: darkTeal.withValues(alpha: 0.3),
+                  thickness: 1,
                 ),
               ),
-              GestureDetector(
-                onTap: () {
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  'OR',
+                  style: TextStyle(
+                    color: darkTeal.withValues(alpha: 0.6),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Divider(
+                  color: darkTeal.withValues(alpha: 0.3),
+                  thickness: 1,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          
+          // Enhanced Employer Registration Section
+          _buildEmployerRegistrationCard(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmployerRegistrationCard() {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            mediumSeaGreen.withValues(alpha: 0.1),
+            paleGreen.withValues(alpha: 0.05),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: mediumSeaGreen.withValues(alpha: 0.3),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: mediumSeaGreen.withValues(alpha: 0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Header with icon and title
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: mediumSeaGreen.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.business_center,
+                  color: mediumSeaGreen,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Are you an Employer?',
+                      style: TextStyle(
+                        color: darkTeal,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      'Post jobs and find talent',
+                      style: TextStyle(
+                        color: darkTeal.withValues(alpha: 0.7),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          
+          // Benefits list
+          _buildEmployerBenefits(),
+          const SizedBox(height: 12),
+          
+          // Enhanced CTA Button
+          SizedBox(
+            width: double.infinity,
+            height: 40,
+            child: ElevatedButton.icon(
+              onPressed: isDebounced('navigate_employer_register') ? null : () {
+                debounce('navigate_employer_register', () {
                   Navigator.push(
                     context,
                     MaterialPageRoute(builder: (context) => const EmployerRegistrationScreen()),
                   );
-                },
+                });
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: mediumSeaGreen,
+                foregroundColor: Colors.white,
+                elevation: 2,
+                shadowColor: mediumSeaGreen.withValues(alpha: 0.3),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              label: const Text(
+                'Register as Employer',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmployerBenefits() {
+    final benefits = [
+      {'icon': Icons.people, 'text': 'Find qualified candidates'},
+      {'icon': Icons.work, 'text': 'Post unlimited jobs'},
+      {'icon': Icons.analytics, 'text': 'Track applications'},
+      {'icon': Icons.verified, 'text': 'Verified employer status'},
+    ];
+
+    return Column(
+      children: benefits.map((benefit) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: Row(
+            children: [
+              Icon(
+                benefit['icon'] as IconData,
+                size: 14,
+                color: mediumSeaGreen,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
                 child: Text(
-                  'Register as Employer',
+                  benefit['text'] as String,
                   style: TextStyle(
-                    color: Colors.blue,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    decoration: TextDecoration.underline,
+                    color: darkTeal.withValues(alpha: 0.8),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ),
             ],
           ),
-        ],
-      ),
+        );
+      }).toList(),
     );
   }
 
@@ -569,49 +803,94 @@ class _LoginScreenState extends State<LoginScreen>
     // Show loading screen while checking session
     if (_isCheckingSession) {
       return Scaffold(
-        backgroundColor: lightMint,
+        backgroundColor: const Color(0xFFEAF9E7), // Light mint background
         body: SafeArea(
           child: Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Container(
-                  width: 60,
-                  height: 60,
-                  decoration: BoxDecoration(
-                    color: mediumSeaGreen,
-                    borderRadius: BorderRadius.circular(15),
-                  ),
-                  child: const Icon(
-                    Icons.business_center,
-                    color: Colors.white,
-                    size: 30,
-                  ),
+                // HANAPBUHAY Logo with animation
+                AnimatedBuilder(
+                  animation: _animationController,
+                  builder: (context, child) {
+                    return SlideTransition(
+                      position: _slideAnimation,
+                      child: FadeTransition(
+                        opacity: _fadeAnimation,
+                        child: Container(
+                          width: 120,
+                          height: 120,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(30),
+                            boxShadow: [
+                              BoxShadow(
+                                color: mediumSeaGreen.withValues(alpha: 0.2),
+                                blurRadius: 20,
+                                offset: const Offset(0, 10),
+                              ),
+                            ],
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(30),
+                            child: Image.asset(
+                              'assets/images/hanapbuhay-logo.png',
+                              width: 100,
+                              height: 100,
+                              fit: BoxFit.contain,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 32),
                 Text(
-                  'Hanap Buhay',
-                  style: TextStyle(
-                    color: darkTeal,
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Checking your session...',
+                  'Your Career Partner',
                   style: TextStyle(
                     color: darkTeal.withValues(alpha: 0.7),
-                    fontSize: 14,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
-                const SizedBox(height: 24),
-                SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(
-                    color: mediumSeaGreen,
-                    strokeWidth: 2,
+                const SizedBox(height: 40),
+                // Loading indicator with better design
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: mediumSeaGreen.withValues(alpha: 0.1),
+                        blurRadius: 10,
+                        offset: const Offset(0, 5),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 32,
+                        height: 32,
+                        child: CircularProgressIndicator(
+                          color: mediumSeaGreen,
+                          strokeWidth: 3,
+                          backgroundColor: mediumSeaGreen.withValues(alpha: 0.2),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Checking your session...',
+                        style: TextStyle(
+                          color: darkTeal,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -691,7 +970,7 @@ class _LoginScreenState extends State<LoginScreen>
               'Welcome Back!',
               style: TextStyle(
                 color: darkTeal,
-                fontSize: 14,
+                fontSize: 16,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -865,15 +1144,17 @@ class _LoginScreenState extends State<LoginScreen>
   Widget _buildForgotPassword() {
     return Align(
       alignment: Alignment.centerRight,
-      child: GestureDetector(
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const ForgotPasswordScreen(),
-            ),
-          );
-        },
+        child: GestureDetector(
+          onTap: () {
+            debounce('navigate_forgot_password', () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ForgotPasswordScreen(),
+                ),
+              );
+            });
+          },
         child: Text(
           'Forgot password?',
           style: TextStyle(
@@ -899,19 +1180,21 @@ class _LoginScreenState extends State<LoginScreen>
               activeColor: mediumSeaGreen,
               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
-              onChanged: (value) async {
-                setState(() {
-                  _staySignedIn = value ?? false;
+              onChanged: (value) {
+                debounce('stay_signed_in_toggle', () async {
+                  setState(() {
+                    _staySignedIn = value ?? false;
+                  });
+                  
+                  // Save the preference using the service
+                  await StaySignedInService.saveStaySignedInPreference(_staySignedIn);
+                  
+                  // If user unchecks "Stay Signed In", immediately sign out
+                  if (!_staySignedIn) {
+                    await supabase.auth.signOut();
+                    await StaySignedInService.clearSessionData();
+                  }
                 });
-                
-                // Save the preference using the service
-                await StaySignedInService.saveStaySignedInPreference(_staySignedIn);
-                
-                // If user unchecks "Stay Signed In", immediately sign out
-                if (!_staySignedIn) {
-                  await supabase.auth.signOut();
-                  await StaySignedInService.clearSessionData();
-                }
               },
             ),
             const SizedBox(width: 6),
@@ -933,11 +1216,12 @@ class _LoginScreenState extends State<LoginScreen>
   Widget _buildLoginButton() {
     return Consumer<AuthProvider>(
       builder: (context, authProvider, child) {
+        final isLoading = authProvider.isLoading || _isSigningIn;
         return SizedBox(
           width: double.infinity,
           height: 44,
           child: ElevatedButton(
-            onPressed: authProvider.isLoading ? null : _signIn,
+            onPressed: isLoading ? null : _signIn,
             style: ElevatedButton.styleFrom(
               backgroundColor: mediumSeaGreen,
               foregroundColor: Colors.white,
@@ -947,7 +1231,7 @@ class _LoginScreenState extends State<LoginScreen>
               ),
               shadowColor: mediumSeaGreen.withValues(alpha: 0.3),
             ),
-            child: authProvider.isLoading
+            child: isLoading
                 ? const SizedBox(
                     width: 18,
                     height: 18,
@@ -967,3 +1251,4 @@ class _LoginScreenState extends State<LoginScreen>
   }
 
 }
+

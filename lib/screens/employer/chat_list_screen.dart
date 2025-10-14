@@ -257,8 +257,8 @@ class _ChatListItem extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
             child: Row(
               children: [
                 // Large profile picture
@@ -297,16 +297,57 @@ class _ChatListItem extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Contact name
-                      Text(
-                        otherMember.userName ?? 'Unknown User',
-                        style: const TextStyle(
-                          color: Color(0xFF1A1A1A),
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      // Contact name and job title
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Contact name
+                          Text(
+                            otherMember.userName ?? 'Unknown User',
+                            style: const TextStyle(
+                              color: Color(0xFF1A1A1A),
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          // Job title and company (if available)
+                          if (chat.jobTitle != null || chat.companyName != null) ...[
+                            const SizedBox(height: 3),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Job title
+                                if (chat.jobTitle != null) ...[
+                                  Text(
+                                    chat.jobTitle!,
+                                    style: TextStyle(
+                                      color: const Color(0xFF4CA771),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                                // Company name
+                                if (chat.companyName != null) ...[
+                                  Text(
+                                    chat.companyName!,
+                                    style: TextStyle(
+                                      color: const Color(0xFF666666),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w400,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ],
+                        ],
                       ),
                       const SizedBox(height: 4),
                       // Message preview
