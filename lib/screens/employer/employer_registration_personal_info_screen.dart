@@ -101,9 +101,8 @@ class _EmployerRegistrationPersonalInfoScreenState extends State<EmployerRegistr
     // Remove all non-digit characters
     final digitsOnly = phone.replaceAll(RegExp(r'[^\d]'), '');
     
-    // Check if it's a valid Philippines mobile number
-    return RegExp(r'^09\d{9}$').hasMatch(digitsOnly) ||
-           RegExp(r'^639\d{9}$').hasMatch(digitsOnly);
+    // Check if it's a valid Philippines mobile number (11 digits starting with 09)
+    return RegExp(r'^09\d{9}$').hasMatch(digitsOnly);
   }
 
   void _nextStep() {
@@ -259,7 +258,7 @@ class _EmployerRegistrationPersonalInfoScreenState extends State<EmployerRegistr
             _buildTextField(
               controller: _phoneController,
               label: 'Phone Number',
-              hint: '09XXXXXXXXX or +63 9XX XXX XXXX',
+              hint: '09XXXXXXXXX',
               icon: Icons.phone,
               keyboardType: TextInputType.phone,
               inputFormatters: [
@@ -269,7 +268,7 @@ class _EmployerRegistrationPersonalInfoScreenState extends State<EmployerRegistr
               validator: (value) {
                 if (value != null && value.trim().isNotEmpty) {
                   if (!_isValidPhilippinesPhoneNumber(value.trim())) {
-                    return 'Invalid Philippines phone number format';
+                    return 'Phone number must be 11 digits starting with 09';
                   }
                 }
                 return null;

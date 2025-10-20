@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../services/storage_service.dart';
@@ -855,12 +856,19 @@ class _EnhancedEditCompanyScreenState extends State<EnhancedEditCompanyScreen> w
                 child: _buildTextField(
                   controller: _contactPersonPhoneController,
                   label: 'Phone Number',
-                  hint: '+63 912 345 6789',
+                  hint: '09XXXXXXXXX',
                   icon: Icons.phone,
                   keyboardType: TextInputType.phone,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(11),
+                  ],
                   validator: (value) {
                     if (value == null || value.trim().isEmpty) {
                       return 'Phone number is required';
+                    }
+                    if (!_isValidPhilippinesPhoneNumber(value.trim())) {
+                      return 'Phone number must be 11 digits starting with 09';
                     }
                     return null;
                   },
@@ -1197,6 +1205,14 @@ class _EnhancedEditCompanyScreenState extends State<EnhancedEditCompanyScreen> w
     );
   }
 
+  bool _isValidPhilippinesPhoneNumber(String phone) {
+    // Remove all non-digit characters
+    final digitsOnly = phone.replaceAll(RegExp(r'[^\d]'), '');
+    
+    // Check if it's a valid Philippines mobile number (11 digits starting with 09)
+    return RegExp(r'^09\d{9}$').hasMatch(digitsOnly);
+  }
+
   Widget _buildTextField({
     required TextEditingController controller,
     required String label,
@@ -1205,6 +1221,7 @@ class _EnhancedEditCompanyScreenState extends State<EnhancedEditCompanyScreen> w
     int maxLines = 1,
     TextInputType? keyboardType,
     String? Function(String?)? validator,
+    List<TextInputFormatter>? inputFormatters,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1223,6 +1240,7 @@ class _EnhancedEditCompanyScreenState extends State<EnhancedEditCompanyScreen> w
           maxLines: maxLines,
           keyboardType: keyboardType,
           validator: validator,
+          inputFormatters: inputFormatters,
           style: const TextStyle(
             color: darkTeal,
             fontSize: 14,

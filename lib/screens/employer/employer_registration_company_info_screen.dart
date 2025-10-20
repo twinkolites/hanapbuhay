@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../models/employer_registration_data.dart';
 import '../../services/input_security_service.dart';
 
@@ -81,6 +82,14 @@ class _EmployerRegistrationCompanyInfoScreenState extends State<EmployerRegistra
   bool _isValidWebsite(String url) {
     if (url.trim().isEmpty) return true;
     return RegExp(r'^https?:\/\/.+').hasMatch(url.trim());
+  }
+
+  bool _isValidPhilippinesPhoneNumber(String phone) {
+    // Remove all non-digit characters
+    final digitsOnly = phone.replaceAll(RegExp(r'[^\d]'), '');
+    
+    // Check if it's a valid Philippines mobile number (11 digits starting with 09)
+    return RegExp(r'^09\d{9}$').hasMatch(digitsOnly);
   }
 
   void _nextStep() {
@@ -285,13 +294,18 @@ class _EmployerRegistrationCompanyInfoScreenState extends State<EmployerRegistra
                   _buildTextField(
                     controller: _contactPersonPhoneController,
                     label: 'Contact Phone',
-                    hint: '09XXXXXXXXX or +63 9XX XXX XXXX',
+                    hint: '09XXXXXXXXX',
                     icon: Icons.phone,
                     keyboardType: TextInputType.phone,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(11),
+                    ],
                     validator: (value) {
                       if (value != null && value.trim().isNotEmpty) {
-                        final error = InputSecurityService.validatePhilippinePhone(value.trim());
-                        return error;
+                        if (!_isValidPhilippinesPhoneNumber(value.trim())) {
+                          return 'Phone number must be 11 digits starting with 09';
+                        }
                       }
                       return null;
                     },
@@ -366,6 +380,7 @@ class _EmployerRegistrationCompanyInfoScreenState extends State<EmployerRegistra
     TextInputType? keyboardType,
     String? Function(String?)? validator,
     VoidCallback? onChanged,
+    List<TextInputFormatter>? inputFormatters,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -385,6 +400,7 @@ class _EmployerRegistrationCompanyInfoScreenState extends State<EmployerRegistra
           keyboardType: keyboardType,
           validator: validator,
           onChanged: onChanged != null ? (_) => onChanged() : null,
+          inputFormatters: inputFormatters,
           decoration: InputDecoration(
             hintText: hint,
             prefixIcon: Icon(icon, color: mediumSeaGreen),
